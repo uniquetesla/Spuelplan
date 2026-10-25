@@ -765,7 +765,7 @@ app.get("/api/flushes", (req, res) => {
   }
   res.json(
     all(
-      `SELECT f.*,r.list_id,r.number run_number,r.status run_status,f.code_snapshot code,f.address_snapshot address,f.target_snapshot target,f.employee_snapshot employee,r.name_snapshot list_name FROM flushes f JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE ${filters.join(" AND ")} ORDER BY f.flushed_at DESC,f.id DESC`,
+      `SELECT f.*,r.list_id,r.number run_number,r.status run_status,r.published_at run_published_at,f.code_snapshot code,f.address_snapshot address,f.target_snapshot target,f.employee_snapshot employee,r.name_snapshot list_name FROM flushes f JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE ${filters.join(" AND ")} ORDER BY f.flushed_at DESC,f.id DESC`,
       ...args,
     ),
   );
