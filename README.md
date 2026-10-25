@@ -134,3 +134,11 @@ Nach dem letzten offenen Spülpunkt wechselt der Durchlauf zur Prüfung. Sämtli
 Betrachter sehen jeden veröffentlichten Durchlauf als eigene Spülliste mit dem Datum der Freigabe zur Betrachtung. Zwei Durchläufe derselben Liste erscheinen als zwei Einträge. Beim Öffnen werden ausschließlich die Messungen dieses Durchlaufs mit ihren ursprünglichen Messdaten angezeigt (Datum ohne Uhrzeit). Die Liste lässt sich direkt ausdrucken. Gespeicherte Durchläufe bleiben beim Neustart erhalten; für den neuen Durchlauf müssen berechtigte Personen neu ausgewählt werden.
 
 Unter **Spülprotokolle** wird jeder verfügbare Durchlauf als eigene Spülliste dargestellt. Nach Auswahl erscheinen ausschließlich dessen Messungen. Der Druckbutton ist erst in dieser Detailansicht vorhanden; der Ausdruck enthält nur die ausgewählte Liste und den ausgewählten Durchlauf.
+
+### Administration: Löschungen und Statistik
+
+In der Detailansicht unter **Spülprotokolle** kann die Administration einzelne Messprotokolle über **Protokoll löschen** oder einen abgeschlossenen Durchlauf über **Durchlauf löschen** entfernen. Die Bestätigung verlangt die Spülpunkt-ID beziehungsweise den Listennamen. Aktive Durchläufe können nicht als abgeschlossene Liste gelöscht werden. Die Listenvorlage und andere Durchläufe bleiben erhalten. Eine gelöschte Messung öffnet den Punkt nur in einem noch aktiven Durchlauf; abgeschlossene Durchläufe bleiben geschlossen. Nach dem Löschen des letzten abgeschlossenen Durchlaufs kann die Vorlage erneut freigegeben werden.
+
+Löschungen werden dauerhaft mit Zeitpunkt und Administrator markiert. Gelöschte Daten verschwinden aus Listen, Protokollen, Ausdrucken, internen Hinweisen und Statistik. Alte ESP32-Übertragungen können gelöschte Protokolle nicht wiederherstellen und erhalten keine Speicherbestätigung mehr.
+
+Unter **Team & Zugänge → Einstellungen** setzt **Statistik zurücksetzen** nach Eingabe von `STATISTIK ZURÜCKSETZEN` die gezählten Spülungen und gespülten m³ für alle Benutzer zurück. Neue Messungen zählen ab diesem Zeitpunkt wieder. Protokolle, Listenvorlagen, Spülpunkte und deren Bearbeitungsstand bleiben erhalten. Der Reset wird über eine dauerhafte Messungs-ID-Grenze gespeichert und bleibt nach Serverneustart bestehen; die jeweiligen Rollen- und Freigabebeschränkungen gelten weiter.

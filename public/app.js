@@ -70,6 +70,8 @@ let user,
   flushes = [],
   notes = [],
   users = [],
+  archivedRuns = [],
+  statistics = { after_id: 0, reset_at: null },
   points = [],
   currentList,
   status,
@@ -201,6 +203,7 @@ function stat(label, value, unit, foot, ic) {
   return `<div class="stat"><div class="stat-head">${label}<span class="stat-icon">${icon(ic)}</span></div><div class="stat-number">${value}<small>${unit}</small></div><div class="stat-foot">${foot}</div></div>`;
 }
 const statusName = {
+  deleted: "Durchlauf gelöscht",
   active: "In Bearbeitung",
   review: "Zur Prüfung",
   published: "Für Betrachter freigegeben",
@@ -215,7 +218,8 @@ function listCard(l) {
 function overview() {
   const total = lists.reduce((s, l) => s + l.point_count, 0),
     done = lists.reduce((s, l) => s + l.completed_count, 0),
-    volume = flushes.reduce((s, f) => s + f.volume, 0);
+    measured = flushes.filter((f) => f.id > statistics.after_id),
+    volume = measured.reduce((s, f) => s + f.volume, 0);
   return (
     heading(
       "Übersicht",
@@ -224,7 +228,7 @@ function overview() {
         ? button("Neue Spülliste", "new-list")
         : button("Zu meinen Spüllisten", "go-lists", "folder"),
     ) +
-    `${isAdmin() && lists.some((l) => l.status === "review") ? `<div class="notice review-notice">${icon("circlecheck")}<span><strong>${lists.filter((l) => l.status === "review").length} abgeschlossene Spülliste(n) warten auf deine Prüfung.</strong><br>Öffne die Liste, prüfe die Protokolle und speichere den Durchgang für Betrachter.</span></div>` : ""}<section class="hero"><div class="hero-copy"><div class="hero-kicker">${icon("wave")}Für ein sauberes Trinkwassernetz</div><h2>Klare Planung. Sauberes Wasser.</h2><p>Behalte deine Spülpunkte im Blick und dokumentiere jede Spülung. Einfach, strukturiert und zuverlässig.</p></div><div class="hero-symbol">${icon("drop")}</div></section><div class="stats">${stat("Spülpunkte gesamt", total, "", `In ${lists.length} Spüllisten organisiert`, "pin")}${stat("Spülpunkte dokumentiert", done, "", `<span class="green">${total ? Math.round((done / total) * 100) : 0} %</span> im aktuellen Durchgang bearbeitet`, "circlecheck")}${stat("Ohne Spülprotokoll", total - done, "", "Im aktuellen Durchgang noch offen", "clock")}${stat("Gespülte Menge", number(volume), "m³", `Aus ${flushes.length} dokumentierten Spülungen`, "drop")}</div><div class="section-head"><div><h2>${user.role === "employee" ? "Meine Spüllisten" : "Deine Spüllisten"}</h2><p>Eine Liste. Alle Spülpunkte. Alles im Blick.</p></div><a href="#/lists" class="text-link">Alle Listen ansehen ${icon("arrow")}</a></div><div class="list-grid">${lists.slice(0, 3).map(listCard).join("") || empty("Dein Wassernetz beginnt hier", isAdmin() ? "Lege deine erste Spülliste an und füge Spülpunkte hinzu." : "Hier erscheinen die für dich verfügbaren Spüllisten.", isAdmin() ? button("Erste Spülliste anlegen", "new-list") : "")}</div><section class="panel"><div class="panel-head"><div><h2>Letzte Spülungen</h2><p>Die neuesten Einträge aus deinem Wassernetz</p></div><a href="#/reports" class="text-link">Alle Protokolle ${icon("arrow")}</a></div>${reportTable(flushes.slice(0, 5), true)}</section>`
+    `${isAdmin() && lists.some((l) => l.status === "review") ? `<div class="notice review-notice">${icon("circlecheck")}<span><strong>${lists.filter((l) => l.status === "review").length} abgeschlossene Spülliste(n) warten auf deine Prüfung.</strong><br>Öffne die Liste, prüfe die Protokolle und speichere den Durchgang für Betrachter.</span></div>` : ""}<section class="hero"><div class="hero-copy"><div class="hero-kicker">${icon("wave")}Für ein sauberes Trinkwassernetz</div><h2>Klare Planung. Sauberes Wasser.</h2><p>Behalte deine Spülpunkte im Blick und dokumentiere jede Spülung. Einfach, strukturiert und zuverlässig.</p></div><div class="hero-symbol">${icon("drop")}</div></section><div class="stats">${stat("Spülpunkte gesamt", total, "", `In ${lists.length} Spüllisten organisiert`, "pin")}${stat("Dokumentierte Spülungen", measured.length, "", statistics.reset_at ? `Seit Statistikreset am ${date(statistics.reset_at)}` : "Seit Beginn der Statistik", "circlecheck")}${stat("Ohne Spülprotokoll", total - done, "", "Im aktuellen Durchgang noch offen", "clock")}${stat("Gespülte Menge", number(volume), "m³", `Aus ${measured.length} dokumentierten Spülungen`, "drop")}</div><div class="section-head"><div><h2>${user.role === "employee" ? "Meine Spüllisten" : "Deine Spüllisten"}</h2><p>Eine Liste. Alle Spülpunkte. Alles im Blick.</p></div><a href="#/lists" class="text-link">Alle Listen ansehen ${icon("arrow")}</a></div><div class="list-grid">${lists.slice(0, 3).map(listCard).join("") || empty("Dein Wassernetz beginnt hier", isAdmin() ? "Lege deine erste Spülliste an und füge Spülpunkte hinzu." : "Hier erscheinen die für dich verfügbaren Spüllisten.", isAdmin() ? button("Erste Spülliste anlegen", "new-list") : "")}</div><section class="panel"><div class="panel-head"><div><h2>Letzte Spülungen</h2><p>Die neuesten Einträge aus deinem Wassernetz</p></div><a href="#/reports" class="text-link">Alle Protokolle ${icon("arrow")}</a></div>${reportTable(flushes.slice(0, 5), true)}</section>`
   );
 }
 function reportTable(rows, compact = false) {
@@ -233,7 +237,7 @@ function reportTable(rows, compact = false) {
       "Noch keine Spülungen",
       "Sobald eine Spülung dokumentiert wird, findest du hier das Protokoll.",
     );
-  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th>${compact ? "" : "<th>Soll m³</th>"}<th>Ist m³</th>${compact ? "" : "<th>Temp. vorher</th><th>Temp. nachher</th>"}<th>Trübung</th><th>Mitarbeiter</th><th>Datum</th></tr></thead><tbody>${rows.map((f) => `<tr><td><span class="point-id">${esc(f.code)}</span><span class="sub">Durchgang ${f.run_number}</span></td><td><strong>${esc(f.address)}</strong>${compact ? `<span class="sub">${esc(f.list_name)}</span>` : ""}</td>${compact ? "" : `<td>${number(f.target)}</td>`}<td><strong>${number(f.volume)}${compact ? " m³" : ""}</strong></td>${compact ? "" : `<td>${number(f.temperature_before)} °C</td><td>${number(f.temperature_after)} °C</td>`}<td><span class="badge ${f.turbidity ? "amber" : "green"}">${f.turbidity ? "Ja" : "Nein"}</span></td><td>${esc(f.employee)}</td><td>${date(f.flushed_at)}</td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th>${compact ? "" : "<th>Soll m³</th>"}<th>Ist m³</th>${compact ? "" : "<th>Temp. vorher</th><th>Temp. nachher</th>"}<th>Trübung</th><th>Mitarbeiter</th><th>Datum</th>${isAdmin() && !compact ? '<th class="no-print">Aktionen</th>' : ""}</tr></thead><tbody>${rows.map((f) => `<tr><td><span class="point-id">${esc(f.code)}</span><span class="sub">Durchgang ${f.run_number}</span></td><td><strong>${esc(f.address)}</strong>${compact ? `<span class="sub">${esc(f.list_name)}</span>` : ""}</td>${compact ? "" : `<td>${number(f.target)}</td>`}<td><strong>${number(f.volume)}${compact ? " m³" : ""}</strong></td>${compact ? "" : `<td>${number(f.temperature_before)} °C</td><td>${number(f.temperature_after)} °C</td>`}<td><span class="badge ${f.turbidity ? "amber" : "green"}">${f.turbidity ? "Ja" : "Nein"}</span></td><td>${esc(f.employee)}</td><td>${date(f.flushed_at)}</td>${isAdmin() && !compact ? `<td class="no-print"><button class="table-action delete-link" data-action="delete-record" data-id="${f.id}">Protokoll löschen ${icon("close")}</button></td>` : ""}</tr>`).join("")}</tbody></table></div>`;
 }
 function listsPage() {
   return (
@@ -251,6 +255,17 @@ function listDetail() {
     return empty(
       "Liste nicht gefunden",
       "Diese Liste existiert nicht oder ist nicht für dich freigegeben.",
+    );
+  if (l.deleted_run)
+    return (
+      `<a class="back" href="#/lists">${icon("back")}Zurück zu den Spüllisten</a>` +
+      heading(
+        esc(l.name),
+        "Der letzte Durchlauf wurde gelöscht. Die Listenvorlage und Spülpunkte bleiben für den nächsten Durchlauf erhalten.",
+        button("Neuen Durchgang freigeben", "restart", "plus") +
+          button("Löschen", "delete-list", "close", true),
+      ) +
+      `<div class="notice">${icon("info")}<span>Wähle die berechtigten Personen neu aus, um diese Liste wieder zu bearbeiten.</span></div>`
     );
   if (user.role === "viewer")
     return (
@@ -279,7 +294,7 @@ function listDetail() {
         : button("Protokolle", "list-reports", "file", true),
       "DEINE SPÜLLISTE",
     ) +
-    `<div class="lifecycle-strip">${statusBadge(l)}<span>Durchgang ${l.run_number}</span><span>${l.published_count} gespeicherte Durchgänge</span></div><div class="detail-strip"><div><small>Spülpunkte</small><strong>${l.point_count} angelegt</strong></div><div><small>Dokumentiert</small><strong>${l.completed_count} von ${l.point_count} Punkten</strong></div><div><small>Freigegeben für</small><strong>${esc(l.assignees.map((a) => a.name).join(", ") || "Noch keine Personen")}</strong></div><div><small>Letzte Spülung</small><strong>${date(l.last_flush)}</strong></div></div><div class="section-head"><div><h2>Spülpunkte</h2><p>Wähle einen Punkt für Details${canDocument() ? " und die nächste Spülung" : ""}.</p></div>${isAdmin() ? `<div class="actions">${l.status === "active" ? `<button class="text-link" data-action="edit-list">${icon("edit")}Liste bearbeiten</button>` : ""}<button class="text-link" data-action="list-reports">${icon("file")}Protokolle</button><button class="text-link delete-link" data-action="delete-list">${icon("close")}Löschen</button></div>` : ""}</div><div class="toolbar"><div class="search">${icon("search")}<input id="point-search" type="search" placeholder="ID oder Adresse suchen …" aria-label="Spülpunkte suchen"></div></div><section class="panel" id="points-results">${pointTable(points)}</section><div class="notice">${icon("info")}<span>${l.status === "active" ? "Jeder Punkt wird einmal pro Durchgang bearbeitet. Nach dem letzten offenen Punkt geht die Liste automatisch zur Prüfung an die Administration und verschwindet bei den Mitarbeitern." : l.status === "review" ? "Dieser Durchgang ist abgeschlossen. Die Administration prüft und speichert ihn und gibt ihn anschließend für Betrachter frei." : "Dieser Durchgang ist gespeichert und für Betrachter freigegeben. Ein neuer Durchgang beginnt wieder mit offenen Punkten; gespeicherte Ergebnisse bleiben erhalten."}</span></div>`
+    `<div class="lifecycle-strip">${statusBadge(l)}<span>Durchgang ${l.run_number}</span><span>${l.published_count} gespeicherte Durchgänge</span></div><div class="detail-strip"><div><small>Spülpunkte</small><strong>${l.point_count} angelegt</strong></div><div><small>Dokumentiert</small><strong>${l.completed_count} von ${l.point_count} Punkten</strong></div><div><small>Freigegeben für</small><strong>${esc(l.assignees.map((a) => a.name).join(", ") || "Noch keine Personen")}</strong></div><div><small>Letzte Spülung</small><strong>${date(l.last_flush)}</strong></div></div><div class="section-head"><div><h2>Spülpunkte</h2><p>Wähle einen Punkt für Details${canDocument() ? " und die nächste Spülung" : ""}.</p></div>${isAdmin() ? `<div class="actions">${l.status === "active" ? `<button class="text-link" data-action="edit-list">${icon("edit")}Liste bearbeiten</button>` : ""}<button class="text-link" data-action="list-reports">${icon("file")}Protokolle</button>${l.status !== "active" ? '<button class="text-link delete-link" data-action="delete-run">Durchlauf löschen</button>' : ""}<button class="text-link delete-link" data-action="delete-list">${icon("close")}Löschen</button></div>` : ""}</div><div class="toolbar"><div class="search">${icon("search")}<input id="point-search" type="search" placeholder="ID oder Adresse suchen …" aria-label="Spülpunkte suchen"></div></div><section class="panel" id="points-results">${pointTable(points)}</section><div class="notice">${icon("info")}<span>${l.status === "active" ? "Jeder Punkt wird einmal pro Durchgang bearbeitet. Nach dem letzten offenen Punkt geht die Liste automatisch zur Prüfung an die Administration und verschwindet bei den Mitarbeitern." : l.status === "review" ? "Dieser Durchgang ist abgeschlossen. Die Administration prüft und speichert ihn und gibt ihn anschließend für Betrachter frei." : "Dieser Durchgang ist gespeichert und für Betrachter freigegeben. Ein neuer Durchgang beginnt wieder mit offenen Punkten; gespeicherte Ergebnisse bleiben erhalten."}</span></div>`
   );
 }
 function pointTable(rows) {
@@ -296,24 +311,10 @@ function pointTable(rows) {
   return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th><th>Sollmenge</th><th>Letzte Spülung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((p) => `<tr class="${notes.some((n) => n.point_id === p.id) ? "point-issue" : ""}"><td><span class="point-id">${esc(p.code)}</span></td><td><strong>${esc(p.address)}</strong></td><td>${number(p.target)} m³</td><td>${p.last_flush ? date(p.last_flush) : "—"}</td><td><span class="badge ${p.completed ? "green" : ""}">${p.completed ? "Bearbeitet" : "Noch offen"}</span></td><td><div class="actions">${canDocument() && !p.completed ? `<button class="table-action" data-action="flush" data-id="${p.id}">Spülung erfassen ${icon("arrow")}</button>` : ""}${isAdmin() || user.role === "viewer" ? `<button class="table-action" data-action="point-detail" data-id="${p.id}">${isAdmin() && currentList.status === "active" && !p.completed ? "Bearbeiten" : "Details"}${icon(isAdmin() ? "edit" : "chevron")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>`;
 }
 function reportRuns() {
-  const groups = new Map();
-  for (const f of flushes) {
-    if (!groups.has(f.run_id))
-      groups.set(f.run_id, {
-        id: f.run_id,
-        listId: f.list_id,
-        name: f.list_name,
-        number: f.run_number,
-        status: f.run_status,
-        publishedAt: f.run_published_at,
-        rows: [],
-      });
-    groups.get(f.run_id).rows.push(f);
-  }
-  return [...groups.values()].sort(
-    (a, b) =>
-      (b.publishedAt || "").localeCompare(a.publishedAt || "") || b.id - a.id,
-  );
+  return archivedRuns.map((r) => ({
+    ...r,
+    rows: flushes.filter((f) => f.run_id === r.id),
+  }));
 }
 function reportCards(runs) {
   return (
@@ -363,7 +364,10 @@ function reportsPage() {
     heading(
       "Spülprotokolle",
       esc(`${run.name} · ${subtitle}`),
-      button("Liste drucken", "print", "print", true),
+      button("Liste drucken", "print", "print", true) +
+        (isAdmin() && run.status !== "active"
+          ? button("Durchlauf löschen", "delete-run", "close", true)
+          : ""),
       "DOKUMENTATION & NACHWEISE",
     ) +
     `<div class="print-heading"><h1>${esc(run.name)} · Durchgang ${run.number}</h1><p>${esc(subtitle)} · ${run.rows.length} Messungen</p></div><section class="panel" id="report-results">${reportTable(run.rows)}</section>`
@@ -401,7 +405,8 @@ function usersPage() {
     heading(
       "Team & Zugänge",
       "Verwalte dein Team und lege fest, wer was sehen und bearbeiten darf.",
-      button("Benutzer anlegen", "new-user", "plus"),
+      button("Einstellungen", "settings", "edit", true) +
+        button("Benutzer anlegen", "new-user", "plus"),
       "GEMEINSAM IM EINSATZ",
     ) +
     `<div class="notice">${icon("shield")}<span><strong>Administration</strong> verwaltet Listen, Spülpunkte und Benutzer. <strong>Administration und Mitarbeiter</strong> dokumentieren Spülungen in ihren freigegebenen Listen. <strong>Betrachter</strong> lesen und drucken Protokolle.</span></div><section class="panel"><div class="panel-head"><div><h2>Dein Team</h2><p>${users.length} Benutzerkonten</p></div></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>E-Mail-Adresse</th><th>Rolle</th><th>Status</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td><strong>${esc(u.name)}</strong>${u.id === user.id ? '<span class="sub">Dein Konto</span>' : ""}</td><td>${esc(u.email)}</td><td><span class="badge ${u.role === "admin" ? "blue" : ""}">${roleName[u.role]}</span></td><td><span class="badge ${u.active ? "green" : ""}">${u.active ? "Aktiv" : "Deaktiviert"}</span>${u.must_change_password ? '<span class="sub">Passwortwechsel erforderlich</span>' : ""}</td><td><div class="actions"><button class="table-action" data-action="edit-user" data-id="${u.id}">Bearbeiten ${icon("edit")}</button>${u.active && u.id !== user.id ? `<button class="table-action" data-action="reset-password" data-id="${u.id}">Einmalpasswort erstellen ${icon("lock")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div></section>`
@@ -424,15 +429,19 @@ async function render() {
   ble.bindUser(user.role === "viewer" ? null : user.id);
   const version = ++loadVersion;
   try {
-    const [ls, fs, ns] = await Promise.all([
+    const [ls, fs, ns, rs, ss] = await Promise.all([
       api("/lists"),
       api("/flushes"),
       user.role !== "viewer" ? api("/internal-notes") : Promise.resolve([]),
+      api("/report-runs"),
+      api("/statistics/settings"),
     ]);
     if (version !== loadVersion) return;
     lists = ls;
     flushes = fs;
     notes = ns;
+    archivedRuns = rs;
+    statistics = ss;
     const [path] = location.hash.slice(2).split("?"),
       parts = (path || "overview").split("/");
     const section = parts[0];
@@ -802,6 +811,73 @@ function deleteListModal() {
     "Liste löschen",
   );
 }
+function deleteRecordModal(record) {
+  if (!record || !isAdmin()) return;
+  showModal(
+    "Messprotokoll löschen",
+    `${esc(record.code)} · ${date(record.flushed_at)}`,
+    `<div class="notice">${icon("info")}<span>Dieses Messprotokoll mit ${number(record.volume)} m³ wird aus Ansichten, Ausdrucken und Statistik entfernt. Zugehörige interne Hinweise werden ausgeblendet. Ein laufender Durchlauf erhält dadurch einen offenen Punkt; abgeschlossene Durchläufe bleiben geschlossen. Andere Messungen bleiben erhalten.</span></div>` +
+      field(
+        "Zur Bestätigung die Spülpunkt-ID eingeben",
+        "confirm_code",
+        "",
+        "text",
+        "required",
+      ),
+    async (data) => {
+      await send(`/flushes/${record.id}`, data, "DELETE");
+      toast("Messprotokoll gelöscht.");
+    },
+    "Protokoll löschen",
+  );
+}
+function deleteRunModal() {
+  const id = Number(
+      location.hash.startsWith("#/lists/")
+        ? currentList?.run_id
+        : new URLSearchParams(location.hash.split("?")[1] || "").get("run"),
+    ),
+    run = reportRuns().find((r) => r.id === id);
+  if (!run || !isAdmin()) return;
+  showModal(
+    "Abgeschlossene Spülliste löschen",
+    `${esc(run.name)} · Durchgang ${run.number}`,
+    `<div class="notice">${icon("info")}<span>Dieser abgeschlossene Durchlauf und seine ${run.rows.length} Messprotokolle werden aus Ansichten, Ausdrucken und Statistik entfernt. Die Listenvorlage, Spülpunkte und andere Durchläufe bleiben erhalten.</span></div>` +
+      field(
+        "Zur Bestätigung den Listennamen eingeben",
+        "confirm_name",
+        "",
+        "text",
+        "required",
+      ),
+    async (data) => {
+      await send(`/runs/${run.id}`, data, "DELETE");
+      location.hash = "#/reports";
+      toast("Abgeschlossener Durchlauf gelöscht.");
+    },
+    "Durchlauf löschen",
+  );
+}
+function settingsModal() {
+  if (!isAdmin()) return;
+  showModal(
+    "Administration · Einstellungen",
+    "Statistik verwalten",
+    `<div class="notice">${icon("info")}<span>Setzt die gezählten Spülungen und gespülten m³ für alle Benutzer zurück. Ab jetzt erfasste Messungen zählen neu. Gespeicherte Messprotokolle, Spüllisten und der tatsächliche Bearbeitungsstand bleiben erhalten. ${statistics.reset_at ? "Letzter Reset: " + date(statistics.reset_at) + "." : "Bisher kein Statistikreset."}</span></div>` +
+      field(
+        "Zur Bestätigung STATISTIK ZURÜCKSETZEN eingeben",
+        "confirm",
+        "",
+        "text",
+        "required",
+      ),
+    async (data) => {
+      await send("/statistics/reset", data);
+      toast("Statistik zurückgesetzt. Protokolle bleiben gespeichert.");
+    },
+    "Statistik zurücksetzen",
+  );
+}
 function passwordForm(forced = false) {
   return `<form id="password-form" class="password-form"><div class="form-error" id="password-error" role="alert"></div>${forced ? "" : field("Aktuelles Passwort", "current_password", "", "password", 'required maxlength="128" autocomplete="current-password"')}${field("Neues Passwort", "new_password", "", "password", 'required minlength="12" maxlength="128" autocomplete="new-password"')}${field("Neues Passwort wiederholen", "confirm_password", "", "password", 'required minlength="12" maxlength="128" autocomplete="new-password"')}<div class="notice">${icon("shield")}<span>Wähle ein persönliches Passwort mit mindestens 12 Zeichen. Nach dem Speichern werden alle anderen Sitzungen abgemeldet.</span></div><button type="submit" class="button">${icon("check")}Passwort speichern</button>${forced ? '<button type="button" class="button secondary" id="password-logout">Abmelden</button>' : ""}</form>`;
 }
@@ -1085,6 +1161,12 @@ function bindActions(root = app) {
           else if (action === "list-reports")
             location.hash =
               "#/reports?list=" + currentList.id + "&run=" + currentList.run_id;
+          else if (action === "delete-record")
+            deleteRecordModal(
+              flushes.find((f) => f.id === Number(b.dataset.id)),
+            );
+          else if (action === "delete-run") deleteRunModal();
+          else if (action === "settings") settingsModal();
           else if (action === "print") window.print();
         } catch (err) {
           toast(err.message);

@@ -1249,3 +1249,348 @@ test("Interne Bemerkungen werden quittiert und niemals an Betrachter ausgeliefer
   assert.ok(stored.acknowledged_at);
   db.close();
 });
+
+test("Admin löscht einzelne Fehlmessungen und abgeschlossene Durchläufe nur nach Bestätigung", async () => {
+  const employeeSession = await login("employee@example.de"),
+    viewerSession = await login("other@example.de");
+  const listId = (
+    await request("/lists", { session: admin, body: { name: "Löschprüfung" } })
+  ).data.id;
+  const pointIds = [];
+  for (const code of ["DELETE-1", "DELETE-2"])
+    pointIds.push(
+      (
+        await request("/points", {
+          session: admin,
+          body: { list_id: listId, code, address: "Heppenheim", target: 2 },
+        })
+      ).data.id,
+    );
+  await request(`/lists/${listId}/assignments`, {
+    session: admin,
+    method: "PUT",
+    body: { user_ids: [employeeSession.user.id] },
+  });
+  const runId = (await lists(admin)).data.find((l) => l.id === listId).run_id;
+  const data = {
+    ...values,
+    source: "esp32",
+    request_id: crypto.randomUUID(),
+    measurement_point_code: "DELETE-1",
+    measurement_target: 2,
+    run_id: runId,
+    note: "Defekte Messung",
+  };
+  const saved = await request(`/points/${pointIds[0]}/flushes`, {
+    session: employeeSession,
+    body: data,
+  });
+  assert.equal(saved.status, 201);
+  assert.equal(
+    (
+      await request(`/runs/${runId}`, {
+        session: admin,
+        method: "DELETE",
+        body: { confirm_name: "Löschprüfung" },
+      })
+    ).status,
+    409,
+  );
+  for (const session of [employeeSession, viewerSession]) {
+    assert.equal(
+      (
+        await request(`/flushes/${saved.data.id}`, {
+          session,
+          method: "DELETE",
+          body: { confirm_code: "DELETE-1" },
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await request(`/runs/${runId}`, {
+          session,
+          method: "DELETE",
+          body: { confirm_name: "Löschprüfung" },
+        })
+      ).status,
+      403,
+    );
+  }
+  assert.equal(
+    (
+      await request(`/flushes/${saved.data.id}`, {
+        session: admin,
+        method: "DELETE",
+        body: { confirm_code: "falsch" },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(`/flushes/${saved.data.id}`, {
+        session: admin,
+        method: "DELETE",
+        body: { confirm_code: "DELETE-1" },
+        csrf: false,
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request(`/flushes/${saved.data.id}`, {
+        session: admin,
+        method: "DELETE",
+        body: { confirm_code: "DELETE-1" },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await records(admin)).data.some((f) => f.id === saved.data.id),
+    false,
+  );
+  assert.equal(
+    (await request("/internal-notes", { session: admin })).data.some(
+      (n) => n.content === "Defekte Messung",
+    ),
+    false,
+  );
+  assert.equal(
+    (
+      await request(`/flushes/${saved.data.id}/receipt`, {
+        session: employeeSession,
+      })
+    ).status,
+    404,
+  );
+  assert.equal(
+    (
+      await request(`/measurement-receipts/${data.request_id}`, {
+        session: employeeSession,
+      })
+    ).status,
+    404,
+  );
+  assert.equal(
+    (
+      await request(`/points/${pointIds[0]}/flushes`, {
+        session: employeeSession,
+        body: data,
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (await lists(employeeSession)).data.find((l) => l.id === listId)
+      .completed_count,
+    0,
+  );
+  await flush(pointIds[0], employeeSession);
+  const second = await flush(pointIds[1], employeeSession);
+  assert.equal(second.data.status, "review");
+  await request(`/lists/${listId}/publish`, { session: admin, body: {} });
+  assert.equal(
+    (
+      await request(`/flushes/${second.data.id}`, {
+        session: admin,
+        method: "DELETE",
+        body: { confirm_code: "DELETE-2" },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await request(`/flushes?run=${runId}`, { session: viewerSession })).data
+      .length,
+    1,
+  );
+  assert.equal(
+    (
+      await request(`/lists/${listId}/points?run=${runId}`, {
+        session: viewerSession,
+      })
+    ).data.length,
+    1,
+  );
+  assert.equal(
+    (
+      await request(`/lists/${listId}/restart`, {
+        session: admin,
+        body: { user_ids: [employeeSession.user.id] },
+      })
+    ).status,
+    201,
+  );
+  const active = (await lists(employeeSession)).data.find(
+    (l) => l.id === listId,
+  );
+  assert.equal(
+    (
+      await request(`/runs/${runId}`, {
+        session: admin,
+        method: "DELETE",
+        body: { confirm_name: "falsch" },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(`/runs/${runId}`, {
+        session: admin,
+        method: "DELETE",
+        body: { confirm_name: "Löschprüfung" },
+        csrf: false,
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request(`/runs/${runId}`, {
+        session: admin,
+        method: "DELETE",
+        body: { confirm_name: "Löschprüfung" },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await request("/report-runs", { session: viewerSession })).data.some(
+      (r) => r.id === runId,
+    ),
+    false,
+  );
+  assert.equal(
+    (
+      await request(`/lists/${listId}/points?run=${runId}`, {
+        session: viewerSession,
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (await lists(employeeSession)).data.find((l) => l.id === listId).run_id,
+    active.run_id,
+  );
+  await flush(pointIds[0], employeeSession);
+  await flush(pointIds[1], employeeSession);
+  assert.equal(
+    (
+      await request(`/runs/${active.run_id}`, {
+        session: admin,
+        method: "DELETE",
+        body: { confirm_name: "Löschprüfung" },
+      })
+    ).status,
+    200,
+  );
+  const template = (await lists(admin)).data.find((l) => l.id === listId);
+  assert.equal(template.deleted_run, true);
+  assert.equal(template.point_count, 0);
+  assert.equal(
+    (
+      await request(`/lists/${listId}/restart`, {
+        session: admin,
+        body: { user_ids: [employeeSession.user.id] },
+      })
+    ).status,
+    201,
+  );
+  assert.equal(
+    (await lists(employeeSession)).data.find((l) => l.id === listId).run_number,
+    3,
+  );
+  const db = new DatabaseSync(join(dir, "test.sqlite"));
+  assert.equal(
+    db.prepare("SELECT deleted_by FROM flushes WHERE id=?").get(saved.data.id)
+      .deleted_by,
+    admin.user.id,
+  );
+  assert.ok(
+    db.prepare("SELECT deleted_at FROM list_runs WHERE id=?").get(runId)
+      .deleted_at,
+  );
+  db.close();
+});
+
+test("Statistikreset ist bestätigt, rollenbeschränkt, dauerhaft und erhält sämtliche Protokolle", async () => {
+  const employeeSession = await login("employee@example.de"),
+    viewerSession = await login("other@example.de");
+  const before = (await records(admin)).data;
+  for (const session of [employeeSession, viewerSession])
+    assert.equal(
+      (
+        await request("/statistics/reset", {
+          session,
+          body: { confirm: "STATISTIK ZURÜCKSETZEN" },
+        })
+      ).status,
+      403,
+    );
+  assert.equal(
+    (
+      await request("/statistics/reset", {
+        session: admin,
+        body: { confirm: "ja" },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request("/statistics/reset", {
+        session: admin,
+        body: { confirm: "STATISTIK ZURÜCKSETZEN" },
+        csrf: false,
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request("/statistics/reset", {
+        session: admin,
+        body: { confirm: "STATISTIK ZURÜCKSETZEN" },
+      })
+    ).status,
+    200,
+  );
+  const settings = (await request("/statistics/settings", { session: admin }))
+    .data;
+  assert.ok(settings.reset_at);
+  assert.equal(before.filter((f) => f.id > settings.after_id).length, 0);
+  assert.deepEqual((await records(admin)).data, before);
+  const targetList = (await lists(employeeSession)).data.find(
+    (l) => l.name === "Löschprüfung",
+  );
+  const point = (
+    await request(`/lists/${targetList.id}/points`, {
+      session: employeeSession,
+    })
+  ).data[0];
+  assert.equal((await flush(point.id, employeeSession)).status, 201);
+  const counted = (await records(admin)).data.filter(
+    (f) => f.id > settings.after_id,
+  );
+  assert.equal(counted.length, 1);
+  assert.equal(counted[0].volume, values.volume);
+  await stop(child);
+  const restarted = await start(join(dir, "test.sqlite"));
+  child = restarted.process;
+  base = restarted.base;
+  assert.deepEqual(
+    (await request("/statistics/settings", { session: admin })).data,
+    settings,
+  );
+  assert.equal(
+    (await request("/report-runs", { session: admin })).data.some(
+      (r) => r.name === "Löschprüfung" && r.number < 3,
+    ),
+    false,
+  );
+});
