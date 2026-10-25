@@ -916,3 +916,142 @@ test("Abgelaufene und ersetzte Einmalpasswörter, Admin-Zugänge und Umgehungsve
     400,
   );
 });
+
+test("ESP32-Messungen erhalten dauerhafte, eigene Speicherbestätigungen und idempotente Wiederholungen", async () => {
+  const employeeSession = await login("employee@example.de");
+  const l = await request("/lists", {
+    session: admin,
+    body: { name: "ESP32-Übertragung" },
+  });
+  const listId = l.data.id;
+  const point = await request("/points", {
+    session: admin,
+    body: {
+      list_id: listId,
+      code: "SP-BLE",
+      address: "Heppenheim",
+      target: 2.5,
+    },
+  });
+  assert.equal(
+    (
+      await request(`/lists/${listId}/assignments`, {
+        session: admin,
+        method: "PUT",
+        body: { user_ids: [employeeSession.user.id] },
+      })
+    ).status,
+    200,
+  );
+  const runId = (await lists(employeeSession)).data.find(
+    (l) => l.id === listId,
+  ).run_id;
+  const data = {
+    ...values,
+    volume: 2.5,
+    temperature_before: 12.45,
+    temperature_after: 9.82,
+    source: "esp32",
+    request_id: crypto.randomUUID(),
+    run_id: runId,
+    measurement_point_code: "SP-BLE",
+    measurement_target: 2.5,
+  };
+  assert.equal(
+    (
+      await request(`/points/${point.data.id}/flushes`, {
+        session: employeeSession,
+        body: { ...data, request_id: undefined },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(`/points/${point.data.id}/flushes`, {
+        session: employeeSession,
+        body: { ...data, measurement_point_code: "FREMD" },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await request(`/points/${point.data.id}/flushes`, {
+        session: employeeSession,
+        body: { ...data, run_id: runId + 1 },
+      })
+    ).status,
+    409,
+  );
+  const saved = await request(`/points/${point.data.id}/flushes`, {
+    session: employeeSession,
+    body: data,
+  });
+  assert.equal(saved.status, 201);
+  assert.equal(saved.data.status, "review");
+  assert.equal(saved.data.receipt.saved, true);
+  assert.equal(saved.data.receipt.source, "esp32");
+  assert.equal(saved.data.receipt.request_id, data.request_id);
+  assert.equal(saved.data.receipt.temperature_before, 12.45);
+  assert.equal(
+    (await lists(employeeSession)).data.some((l) => l.id === listId),
+    false,
+  );
+  const receipt = await request(`/flushes/${saved.data.id}/receipt`, {
+    session: employeeSession,
+  });
+  assert.equal(receipt.status, 200);
+  assert.equal(receipt.data.id, saved.data.id);
+  const recovered = await request(`/measurement-receipts/${data.request_id}`, {
+    session: employeeSession,
+  });
+  assert.equal(recovered.status, 200);
+  assert.deepEqual(recovered.data, saved.data.receipt);
+  assert.equal(
+    (
+      await request(`/measurement-receipts/${data.request_id}`, {
+        session: admin,
+      })
+    ).status,
+    404,
+  );
+  assert.equal(
+    (await request(`/flushes/${saved.data.id}/receipt`, { session: admin }))
+      .status,
+    404,
+  );
+  const retried = await request(`/points/${point.data.id}/flushes`, {
+    session: employeeSession,
+    body: data,
+  });
+  assert.equal(retried.status, 200);
+  assert.equal(retried.data.id, saved.data.id);
+  assert.deepEqual(retried.data.receipt, saved.data.receipt);
+  assert.equal(
+    (
+      await request(`/points/${point.data.id}/flushes`, {
+        session: employeeSession,
+        body: { ...data, volume: 3 },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await request(`/points/${point.data.id}/flushes`, {
+        session: admin,
+        body: data,
+      })
+    ).status,
+    409,
+  );
+  const db = new DatabaseSync(join(dir, "test.sqlite"));
+  assert.equal(
+    db
+      .prepare("SELECT count(*) n FROM flushes WHERE request_id=?")
+      .get(data.request_id).n,
+    1,
+  );
+  db.close();
+});

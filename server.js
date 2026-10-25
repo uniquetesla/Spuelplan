@@ -91,6 +91,16 @@ for (const [name, definition] of [
   )
     db.exec(`ALTER TABLE users ADD COLUMN ${name} ${definition}`);
 }
+if (
+  !db
+    .prepare("PRAGMA table_info(flushes)")
+    .all()
+    .some((c) => c.name === "request_id")
+)
+  db.exec("ALTER TABLE flushes ADD COLUMN request_id TEXT");
+db.exec(
+  "CREATE UNIQUE INDEX IF NOT EXISTS flushes_request_idx ON flushes(request_id) WHERE request_id IS NOT NULL",
+);
 const setupTokenPath = resolve(dirname(dbPath), "setup-token");
 if (!oneUserExists() && !existsSync(setupTokenPath))
   writeFileSync(setupTokenPath, randomBytes(32).toString("hex"), {
@@ -729,9 +739,84 @@ app.get("/api/flushes", (req, res) => {
     ),
   );
 });
+const measurementReceipt = (id) => {
+  const record = one(
+    "SELECT id,request_id,point_id,run_id,user_id,source,code_snapshot code,target_snapshot target,volume,temperature_before,temperature_after FROM flushes WHERE id=?",
+    id,
+  );
+  return record ? { ...record, saved: true } : null;
+};
+app.get("/api/flushes/:id/receipt", (req, res) => {
+  const receipt = measurementReceipt(Number(req.params.id));
+  if (
+    !["admin", "employee"].includes(req.session.role) ||
+    !receipt ||
+    receipt.source !== "esp32" ||
+    receipt.user_id !== req.session.user_id
+  )
+    return fail(res, 404, "Keine eigene ESP32-Speicherbestätigung gefunden.");
+  res.json(receipt);
+});
+app.get("/api/measurement-receipts/:requestId", (req, res) => {
+  const record = one(
+    "SELECT id FROM flushes WHERE request_id=? AND user_id=? AND source='esp32'",
+    req.params.requestId,
+    req.session.user_id,
+  );
+  if (!record || !["admin", "employee"].includes(req.session.role))
+    return fail(
+      res,
+      404,
+      "Es liegt noch keine eigene Server-Speicherbestätigung für diesen Auftrag vor.",
+    );
+  res.json(measurementReceipt(record.id));
+});
 app.post("/api/points/:id/flushes", (req, res) => {
   if (!["admin", "employee"].includes(req.session.role))
     return fail(res, 403, "Betrachter können keine Spülungen dokumentieren.");
+  const b = req.body,
+    source = b.source ?? "manual";
+  if (!["manual", "esp32"].includes(source))
+    return fail(res, 400, "Unbekannte Messwertquelle.");
+  if (
+    (b.request_id !== undefined || source === "esp32") &&
+    (typeof b.request_id !== "string" ||
+      !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(b.request_id))
+  )
+    return fail(res, 400, "Eine gültige Übertragungs-ID ist erforderlich.");
+  if (b.request_id) {
+    const cached = one(
+      "SELECT * FROM flushes WHERE request_id=?",
+      b.request_id,
+    );
+    if (cached) {
+      if (
+        cached.user_id !== req.session.user_id ||
+        cached.point_id !== Number(req.params.id) ||
+        cached.source !== source ||
+        cached.volume !== b.volume ||
+        cached.temperature_before !== b.temperature_before ||
+        cached.temperature_after !== b.temperature_after ||
+        typeof b.turbidity !== "boolean" ||
+        cached.turbidity !== (b.turbidity ? 1 : 0) ||
+        (source === "esp32" &&
+          (cached.run_id !== b.run_id ||
+            cached.code_snapshot !== b.measurement_point_code ||
+            cached.target_snapshot !== b.measurement_target))
+      )
+        return fail(
+          res,
+          409,
+          "Die Übertragungs-ID gehört zu anderen gespeicherten Messdaten.",
+        );
+      return res.json({
+        id: cached.id,
+        status: one("SELECT status FROM list_runs WHERE id=?", cached.run_id)
+          .status,
+        receipt: source === "esp32" ? measurementReceipt(cached.id) : undefined,
+      });
+    }
+  }
   const p = one(
     "SELECT p.* FROM points p JOIN lists l ON l.id=p.list_id WHERE p.id=? AND p.active=1 AND l.deleted_at IS NULL",
     Number(req.params.id),
@@ -746,7 +831,18 @@ app.post("/api/points/:id/flushes", (req, res) => {
       409,
       "Dieser Durchgang ist abgeschlossen und wird von der Administration geprüft.",
     );
-  const b = req.body;
+  if (
+    source === "esp32" &&
+    (b.run_id !== r.id ||
+      b.measurement_point_code !== p.code ||
+      b.measurement_target !== p.target ||
+      b.volume < p.target)
+  )
+    return fail(
+      res,
+      409,
+      "Die ESP32-Messung passt nicht zum aktuellen Spülpunkt, zur Sollmenge oder zum Durchgang.",
+    );
   if (
     ["temperature_before", "temperature_after", "volume"].some(
       (k) => typeof b[k] !== "number" || !Number.isFinite(b[k]),
@@ -772,7 +868,7 @@ app.post("/api/points/:id/flushes", (req, res) => {
     );
   const result = transaction(() => {
     const inserted = run(
-      "INSERT INTO flushes(point_id,user_id,temperature_before,temperature_after,volume,turbidity,flushed_at,source,code_snapshot,address_snapshot,target_snapshot,employee_snapshot,run_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO flushes(point_id,user_id,temperature_before,temperature_after,volume,turbidity,flushed_at,source,code_snapshot,address_snapshot,target_snapshot,employee_snapshot,run_id,request_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       p.id,
       req.session.user_id,
       b.temperature_before,
@@ -780,12 +876,13 @@ app.post("/api/points/:id/flushes", (req, res) => {
       b.volume,
       b.turbidity ? 1 : 0,
       new Date().toISOString(),
-      "manual",
+      source,
       p.code,
       p.address,
       p.target,
       req.session.name,
       r.id,
+      b.request_id ?? null,
     );
     finishIfComplete(p.list_id);
     return inserted;
@@ -793,6 +890,10 @@ app.post("/api/points/:id/flushes", (req, res) => {
   res.status(201).json({
     id: Number(result.lastInsertRowid),
     status: currentRun(p.list_id).status,
+    receipt:
+      source === "esp32"
+        ? measurementReceipt(Number(result.lastInsertRowid))
+        : undefined,
   });
 });
 app.post("/api/lists/:id/publish", admin, (req, res) => {

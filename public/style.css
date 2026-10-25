@@ -1776,3 +1776,85 @@ textarea::placeholder {
     font-size: 22px;
   }
 }
+
+.ble-widget {
+  padding: 18px;
+  border: 1px solid #dcebf2;
+  border-radius: 10px;
+  background: #f7fbfd;
+  margin: 0 0 22px;
+}
+.ble-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ble-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: #297998;
+}
+.ble-title svg {
+  width: 19px;
+  height: 19px;
+}
+.ble-status,
+.ble-job {
+  font-size: 11px;
+  color: #6d899b;
+  line-height: 1.8;
+  margin-top: 12px;
+}
+.ble-widget .button {
+  font-size: 11px;
+  padding: 10px 12px;
+}
+.ble-exchange {
+  margin-top: 14px;
+}
+.ble-hint {
+  font-size: 10px;
+  color: #7f95a5;
+  line-height: 1.8;
+  margin-top: 12px;
+}
+.ble-success {
+  font-size: 11px;
+  color: #16806d;
+  line-height: 1.8;
+  margin-top: 12px;
+}
+.ble-error {
+  font-size: 11px;
+  color: #a26442;
+  line-height: 1.8;
+  margin-top: 12px;
+}
+.ble-abandon {
+  font-size: 10px;
+  margin-top: 12px;
+}
+input[readonly] {
+  background: #eef5f8;
+  color: #547b90;
+}
+@media (max-width: 620px) {
+  .ble-head {
+    align-items: flex-start;
+  }
+  .ble-widget {
+    padding: 15px;
+  }
+  .ble-exchange {
+    width: 100%;
+  }
+}
+
+.ble-abandon {
+  margin-right: 14px;
+}
