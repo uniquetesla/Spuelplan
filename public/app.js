@@ -68,6 +68,7 @@ let user,
   csrf,
   lists = [],
   flushes = [],
+  notes = [],
   users = [],
   points = [],
   currentList,
@@ -172,6 +173,7 @@ const navItems = () => [
   ["overview", "Übersicht", "grid"],
   ["lists", "Spüllisten", "folder"],
   ["reports", "Spülprotokolle", "file"],
+  ...(user.role !== "viewer" ? [["notes", "Interne Hinweise", "info"]] : []),
   ...(isAdmin() ? [["users", "Team & Zugänge", "users"]] : []),
   ...(user.role !== "viewer"
     ? [["devices", "Geräte & Sensoren", "bluetooth"]]
@@ -180,7 +182,7 @@ const navItems = () => [
 ];
 function layout(content, section) {
   const nav = navItems();
-  app.innerHTML = `<div class="shell"><div class="menu-backdrop" data-action="menu"></div><aside class="sidebar">${brand()}<div class="nav-label">Arbeitsbereich</div><nav class="nav" aria-label="Hauptnavigation">${nav.map(([id, label, ic]) => `<a href="#/${id}" class="${section === id ? "active" : ""}" ${section === id ? 'aria-current="page"' : ""}>${icon(ic)}${label}${id === "lists" ? `<span class="count">${lists.length}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="water-note">${icon("wave")}<h4>Jeder Tropfen zählt.</h4><p>Spülmanagement für das Trinkwassernetz der Stadtwerke Heppenheim.</p></div><div class="user"><div class="avatar">${esc(initials(user.name))}</div><div><strong>${esc(user.name)}</strong><small>${roleName[user.role]}</small></div><button class="logout" data-action="logout" title="Abmelden" aria-label="Abmelden">${icon("logout")}</button></div></div></aside><main class="main"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-action="menu" aria-label="Menü öffnen">${icon("menu")}</button>Arbeitsbereich ${icon("chevron")} <strong>${nav.find((x) => x[0] === section)?.[1] || "Spüllisten"}</strong></div><div class="top-right"><span class="system"><i class="dot"></i>Mit Datenbank verbunden</span><span class="top-date">${new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span><div class="avatar">${esc(initials(user.name))}</div></div></header><div class="content">${status.demo ? '<div class="demo-notice">Demo-Umgebung · Alle Spülpunkte, Personen und Messwerte sind Beispieldaten.</div>' : ""}${ble.job && user.role !== "viewer" ? `<div class="notice no-print">${icon("bluetooth")}<span>ESP32-Auftrag ${esc(ble.job.code)}: ${ble.job.savedId ? "Die Messung ist gespeichert; die Empfangsbestätigung steht noch aus." : "Der Auftrag ist noch offen. Bei unklarem Speicherstatus kannst du die Serverbestätigung prüfen."} <a class="text-link" href="#/devices">Verbindung öffnen und bestätigen</a></span></div>` : ""}${content}<footer class="footer"><span>© ${new Date().getFullYear()} SpülPilot · Stadtwerke Heppenheim</span><span>${icon("shield")}Zugriff geschützt · ${roleName[user.role]}</span></footer></div></main></div>`;
+  app.innerHTML = `<div class="shell"><div class="menu-backdrop" data-action="menu"></div><aside class="sidebar">${brand()}<div class="nav-label">Arbeitsbereich</div><nav class="nav" aria-label="Hauptnavigation">${nav.map(([id, label, ic]) => `<a href="#/${id}" class="${section === id ? "active" : ""}" ${section === id ? 'aria-current="page"' : ""}>${icon(ic)}${label}${id === "lists" ? `<span class="count">${lists.length}</span>` : id === "notes" && notes.length ? `<span class="count issue-count">${new Set(notes.map((n) => n.point_id)).size}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="water-note">${icon("wave")}<h4>Jeder Tropfen zählt.</h4><p>Spülmanagement für das Trinkwassernetz der Stadtwerke Heppenheim.</p></div><div class="user"><div class="avatar">${esc(initials(user.name))}</div><div><strong>${esc(user.name)}</strong><small>${roleName[user.role]}</small></div><button class="logout" data-action="logout" title="Abmelden" aria-label="Abmelden">${icon("logout")}</button></div></div></aside><main class="main"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-action="menu" aria-label="Menü öffnen">${icon("menu")}</button>Arbeitsbereich ${icon("chevron")} <strong>${nav.find((x) => x[0] === section)?.[1] || "Spüllisten"}</strong></div><div class="top-right"><span class="system"><i class="dot"></i>Mit Datenbank verbunden</span><span class="top-date">${new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span><div class="avatar">${esc(initials(user.name))}</div></div></header><div class="content">${status.demo ? '<div class="demo-notice">Demo-Umgebung · Alle Spülpunkte, Personen und Messwerte sind Beispieldaten.</div>' : ""}${ble.job && user.role !== "viewer" ? `<div class="notice no-print">${icon("bluetooth")}<span>ESP32-Auftrag ${esc(ble.job.code)}: ${ble.job.savedId ? "Die Messung ist gespeichert; die Empfangsbestätigung steht noch aus." : "Der Auftrag ist noch offen. Bei unklarem Speicherstatus kannst du die Serverbestätigung prüfen."} <a class="text-link" href="#/devices">Verbindung öffnen und bestätigen</a></span></div>` : ""}${user.role !== "viewer" && notes.length && section !== "notes" ? `<div class="internal-alert no-print">${icon("info")}<a href="#/notes">${new Set(notes.map((n) => n.point_id)).size} Spülpunkt(e) mit offenen internen Bemerkungen ansehen</a></div>` : ""}${content}<footer class="footer"><span>© ${new Date().getFullYear()} SpülPilot · Stadtwerke Heppenheim</span><span>${icon("shield")}Zugriff geschützt · ${roleName[user.role]}</span></footer></div></main></div>`;
   bindActions();
   updateBlePanels();
 }
@@ -279,7 +281,7 @@ function pointTable(rows) {
         ? button("Spülpunkt anlegen", "new-point")
         : "",
     );
-  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th><th>Sollmenge</th><th>Letzte Spülung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((p) => `<tr><td><span class="point-id">${esc(p.code)}</span></td><td><strong>${esc(p.address)}</strong></td><td>${number(p.target)} m³</td><td>${p.last_flush ? date(p.last_flush) : "—"}</td><td><span class="badge ${p.completed ? "green" : ""}">${p.completed ? "Bearbeitet" : "Noch offen"}</span></td><td><div class="actions">${canDocument() && !p.completed ? `<button class="table-action" data-action="flush" data-id="${p.id}">Spülung erfassen ${icon("arrow")}</button>` : ""}${isAdmin() || user.role === "viewer" ? `<button class="table-action" data-action="point-detail" data-id="${p.id}">${isAdmin() && currentList.status === "active" && !p.completed ? "Bearbeiten" : "Details"}${icon(isAdmin() ? "edit" : "chevron")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th><th>Sollmenge</th><th>Letzte Spülung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((p) => `<tr class="${notes.some((n) => n.point_id === p.id) ? "point-issue" : ""}"><td><span class="point-id">${esc(p.code)}</span></td><td><strong>${esc(p.address)}</strong></td><td>${number(p.target)} m³</td><td>${p.last_flush ? date(p.last_flush) : "—"}</td><td><span class="badge ${p.completed ? "green" : ""}">${p.completed ? "Bearbeitet" : "Noch offen"}</span></td><td><div class="actions">${canDocument() && !p.completed ? `<button class="table-action" data-action="flush" data-id="${p.id}">Spülung erfassen ${icon("arrow")}</button>` : ""}${isAdmin() || user.role === "viewer" ? `<button class="table-action" data-action="point-detail" data-id="${p.id}">${isAdmin() && currentList.status === "active" && !p.completed ? "Bearbeiten" : "Details"}${icon(isAdmin() ? "edit" : "chevron")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>`;
 }
 function reportsPage() {
   const selected =
@@ -295,6 +297,33 @@ function reportsPage() {
       "DOKUMENTATION & NACHWEISE",
     ) +
     `<div class="print-heading"><h1>Spülprotokoll${selected ? " · " + esc(lists.find((l) => String(l.id) === selected)?.name || "") : ""}</h1><p>Erstellt am ${date(new Date().toISOString())} · ${esc(user.name)} · ${filtered.length} Spülungen</p></div><div class="toolbar"><div class="search">${icon("search")}<input id="report-search" type="search" placeholder="ID, Adresse oder Mitarbeiter suchen …" aria-label="Protokolle suchen"></div><select id="report-list" aria-label="Spülliste filtern"><option value="">Alle Spüllisten</option>${lists.map((l) => `<option value="${l.id}" ${String(l.id) === selected ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select><select id="report-run" aria-label="Durchgang filtern"><option value="">Alle Durchgänge</option>${[...new Map(flushes.map((f) => [f.run_id, f])).values()].map((f) => `<option value="${f.run_id}">${esc(f.list_name)} · Durchgang ${f.run_number}</option>`).join("")}</select></div><section class="panel" id="report-results">${reportTable(filtered)}</section>`
+  );
+}
+function notesPage() {
+  const groups = new Map();
+  for (const note of notes) {
+    if (!groups.has(note.point_id)) groups.set(note.point_id, []);
+    groups.get(note.point_id).push(note);
+  }
+  return (
+    heading(
+      "Interne Hinweise",
+      "Offene Bemerkungen zu Spülpunkten. Quittierte Hinweise verschwinden aus dieser Übersicht.",
+      "",
+      "NUR FÜR DEN INTERNEN DIENST",
+    ) +
+    `<div class="issue-grid">${
+      [...groups.values()]
+        .map((group) => {
+          const first = group[0];
+          return `<article class="issue-card"><header><span class="point-id">${esc(first.code)}</span><span class="badge issue-badge">Offener Hinweis</span></header><h2>${esc(first.address)}</h2><p class="subtitle">${esc(first.list_name)}</p>${group.map((note) => `<div class="issue-note"><p>${esc(note.content)}</p><small>${esc(note.employee)} · ${date(note.flushed_at)} · Durchgang ${note.run_number}</small></div>`).join("")}<button class="button secondary" data-action="ack-notes" data-ids="${group.map((n) => n.id).join(",")}">${icon("check")}Quittieren</button></article>`;
+        })
+        .join("") ||
+      empty(
+        "Keine offenen Hinweise",
+        "Alle internen Bemerkungen sind quittiert oder es wurden noch keine gemeldet.",
+      )
+    }</div>`
   );
 }
 function usersPage() {
@@ -325,14 +354,25 @@ async function render() {
   ble.bindUser(user.role === "viewer" ? null : user.id);
   const version = ++loadVersion;
   try {
-    const [ls, fs] = await Promise.all([api("/lists"), api("/flushes")]);
+    const [ls, fs, ns] = await Promise.all([
+      api("/lists"),
+      api("/flushes"),
+      user.role !== "viewer" ? api("/internal-notes") : Promise.resolve([]),
+    ]);
     if (version !== loadVersion) return;
     lists = ls;
     flushes = fs;
+    notes = ns;
     const [path] = location.hash.slice(2).split("?"),
       parts = (path || "overview").split("/");
     const section = parts[0];
-    if (section === "account") {
+    if (section === "notes") {
+      if (user.role === "viewer") {
+        location.hash = "#/overview";
+        return;
+      }
+      layout(notesPage(), "notes");
+    } else if (section === "account") {
       layout(accountPage(), "account");
       bindPasswordForm();
     } else if (section === "devices" && user.role === "viewer") {
@@ -580,7 +620,7 @@ function flushModal(p) {
   showModal(
     "Spülung dokumentieren",
     esc(p.code) + " · " + esc(p.address),
-    `<div class="measure-box">${icon("drop")}<div><strong>Geplante Spülmenge</strong><small>${esc(currentList.name)}</small></div><b>${number(p.target)} <small>m³</small></b></div><div class="ble-widget" data-ble-panel="form"></div><div class="form-row">${field("Temperatur vorher · °C", "temperature_before", "", "number", 'required min="0" max="100" step="any" placeholder="22,0"')}${field("Temperatur nachher · °C", "temperature_after", "", "number", 'required min="0" max="100" step="any" placeholder="14,0"')}</div>${field("Tatsächlich gespülte Menge · m³", "volume", "", "number", 'required min="0.001" max="1000000" step="any" placeholder="z. B. 2,6"')}<div class="field"><label for="f-turbidity">Trübung festgestellt?</label><select id="f-turbidity" name="turbidity" required><option value="">Bitte auswählen</option><option value="false">Nein – keine Trübung</option><option value="true">Ja – Trübung vorhanden</option></select></div><div class="notice">${icon("clock")}<span>Das Spüldatum wird beim Speichern automatisch eingetragen.<br>Mitarbeiter: <strong>${esc(user.name)}</strong><br>Das Protokoll bleibt als unveränderlicher Nachweis erhalten.</span></div>`,
+    `<div class="measure-box">${icon("drop")}<div><strong>Geplante Spülmenge</strong><small>${esc(currentList.name)}</small></div><b>${number(p.target)} <small>m³</small></b></div><div class="ble-widget" data-ble-panel="form"></div><div class="form-row">${field("Temperatur vorher · °C", "temperature_before", "", "number", 'required min="0" max="100" step="any" placeholder="22,0"')}${field("Temperatur nachher · °C", "temperature_after", "", "number", 'required min="0" max="100" step="any" placeholder="14,0"')}</div>${field("Tatsächlich gespülte Menge · m³", "volume", "", "number", 'required min="0.001" max="1000000" step="any" placeholder="z. B. 2,6"')}<div class="field"><label for="f-turbidity">Trübung festgestellt?</label><select id="f-turbidity" name="turbidity" required><option value="">Bitte auswählen</option><option value="false">Nein – keine Trübung</option><option value="true">Ja – Trübung vorhanden</option></select></div><div class="field"><label for="f-note">Interne Bemerkung <span class="muted">(optional)</span></label><textarea id="f-note" name="note" maxlength="2000" rows="3" placeholder="Zum Beispiel: Hydrant undicht oder Beschädigung festgestellt"></textarea><small class="field-hint">Nur für Administration und berechtigte Mitarbeiter. Nicht für Betrachter oder den Ausdruck.</small></div><div class="notice">${icon("clock")}<span>Das Spüldatum wird beim Speichern automatisch eingetragen.<br>Mitarbeiter: <strong>${esc(user.name)}</strong><br>Das Protokoll bleibt als unveränderlicher Nachweis erhalten.</span></div>`,
     async (data) => {
       const context = activeBleForm;
       const fromEsp32 = !!context?.imported;
@@ -602,6 +642,7 @@ function flushModal(p) {
           temperature_after: Number(data.temperature_after),
           volume: Number(data.volume),
           turbidity: data.turbidity === "true",
+          note: data.note ?? "",
           ...(fromEsp32
             ? {
                 source: "esp32",
@@ -795,24 +836,19 @@ function blePanel(context) {
   const connected = ble.connected,
     job = ble.job,
     conflict = context && job && !ble.matches(context.point, context.runId);
+  const linked = context && ble.matches(context.point, context.runId);
   const state = ble.deviceStatus;
   const status = state
     ? `${STATUS_LABELS[state.state]} · ${state.code}`
     : connected
       ? "Verbunden. Wähle einen Spülpunkt für den Messauftrag."
       : "Noch nicht verbunden";
-  return `<div class="ble-head"><div class="ble-title">${icon("bluetooth")}<strong>${connected ? esc(ble.device.name || "SpuelPilot-ESP32") : "SpuelPilot-ESP32"}</strong><span class="badge ${connected ? "green" : ""}">${connected ? "Verbunden" : "Nicht verbunden"}</span></div><div class="actions">${connected ? '<button type="button" class="button secondary" data-ble-action="disconnect">Trennen</button>' : `<button type="button" class="button secondary" data-ble-action="connect" ${!supported || ble.busy ? "disabled" : ""}>${icon("bluetooth")}${ble.busy ? "Verbindet …" : "Bluetooth verbinden"}</button>`}</div></div><p class="ble-status" role="status" aria-live="polite">${esc(status)}</p>${!supported ? '<div class="notice">Web Bluetooth benötigt HTTPS und einen unterstützten Browser, z. B. Chrome auf Android. iOS Safari unterstützt es nicht. Die manuelle Erfassung bleibt verfügbar.</div>' : ""}${job ? `<p class="ble-job">Auftrag <strong>${esc(job.code)}</strong> · ${number(job.target)} m³${job.savedId ? " · Auf Server gespeichert; Empfang bestätigen" : ""}</p>` : ""}${context && !job?.savedId ? `<button type="button" class="button ble-exchange" data-ble-action="exchange" ${!connected || ble.busy || context?.serverSaving || conflict ? "disabled" : ""}>${icon(job ? "drop" : "arrow")}${ble.busy ? "Übertragung läuft …" : job ? "Messdaten abrufen" : "Spülpunkt an ESP32 senden"}</button>` : ""}${job?.savedId ? `<button type="button" class="button" data-ble-action="ack" ${!connected || ble.busy ? "disabled" : ""}>${icon("check")}Empfang am ESP32 bestätigen</button>` : ""}${job && !job.savedId && !job.received ? `<div class="ble-cancel"><label class="checkbox-row"><input type="checkbox" data-ble-cancel-support ${ble.cancelSupported ? "checked" : ""} ${!connected || ble.busy || context?.serverSaving ? "disabled" : ""}><span><strong>Firmware unterstützt Messabbruch über ID;0</strong><small>Nur aktivieren, wenn diese Erweiterung auf dem ESP32 installiert ist.</small></span></label><button type="button" class="button danger" data-ble-action="cancel" ${!connected || ble.busy || !ble.cancelSupported || context?.serverSaving ? "disabled" : ""}>${ble.job.cancelPending ? "Abbruch prüfen / erneut versuchen" : "Messung abbrechen"}</button></div>` : ""}${conflict ? '<p class="ble-hint">Schließe zuerst den offenen ESP32-Auftrag ab. Es wird kein anderer Spülpunkt übertragen.</p>' : ""}${context?.imported ? '<p class="ble-success">Messdaten übernommen. Trübung auswählen und die Spülung auf dem Server speichern. Erst danach wird ACK gesendet.</p>' : job && !job.savedId ? '<p class="ble-hint">Warte auf die Status-LED am ESP32 und frage dann die Messdaten ab. Das Ergebnis bleibt bis zur erfolgreichen Speicherung auf dem Gerät.</p>' : ""}${ble.error ? `<p class="ble-error" role="status">${esc(ble.error)}</p>` : ""}${job && !job.savedId ? '<button type="button" class="text-link ble-abandon" data-ble-action="recover">Server-Speicherstatus prüfen</button><button type="button" class="text-link ble-abandon" data-ble-action="abandon">Lokalen Auftrag verwerfen</button>' : ""}`;
+  return `<div class="ble-head"><div class="ble-title">${icon("bluetooth")}<strong>${connected ? esc(ble.device.name || "SpuelPilot-ESP32") : "SpuelPilot-ESP32"}</strong><span class="badge ${connected ? "green" : ""}">${connected ? "Verbunden" : "Nicht verbunden"}</span></div><div class="actions">${connected ? '<button type="button" class="button secondary" data-ble-action="disconnect">Trennen</button>' : `<button type="button" class="button secondary" data-ble-action="connect" ${!supported || ble.busy ? "disabled" : ""}>${icon("bluetooth")}${ble.busy ? "Verbindet …" : "Bluetooth verbinden"}</button>`}</div></div><p class="ble-status" role="status" aria-live="polite">${esc(status)}</p>${!supported ? '<div class="notice">Web Bluetooth benötigt HTTPS und einen unterstützten Browser, z. B. Chrome auf Android. iOS Safari unterstützt es nicht. Die manuelle Erfassung bleibt verfügbar.</div>' : ""}${job ? `<p class="ble-job">Auftrag <strong>${esc(job.code)}</strong> · ${number(job.target)} m³${job.savedId ? " · Auf Server gespeichert; Empfang bestätigen" : ""}</p>` : ""}${context && !job?.savedId ? `<button type="button" class="button ble-exchange" data-ble-action="exchange" ${!connected || ble.busy || context?.serverSaving ? "disabled" : ""}>${icon(job && linked ? "drop" : "arrow")}${ble.busy ? "Übertragung läuft …" : job && linked ? "Messdaten abrufen" : "Spülpunkt an ESP32 senden"}</button>` : ""}${job?.savedId ? `<button type="button" class="button" data-ble-action="ack" ${!connected || ble.busy ? "disabled" : ""}>${icon("check")}Empfang am ESP32 bestätigen</button>` : ""}${job && !job.savedId && !job.received ? `<div class="ble-cancel"><button type="button" class="button danger" data-ble-action="cancel" ${!connected || ble.busy || context?.serverSaving ? "disabled" : ""}>${ble.job.cancelPending ? "Abbruch prüfen / erneut versuchen" : "Messung abbrechen"}</button>${context && linked && !ble.job.cancelPending ? '<button type="button" class="button secondary" data-ble-action="restart">Neue Messung starten</button>' : ""}</div>` : ""}${conflict ? '<p class="ble-hint">Beim Start dieses Spülpunkts wird gefragt, ob die laufende Messung zuerst abgebrochen werden soll.</p>' : ""}${context?.imported ? '<p class="ble-success">Messdaten übernommen. Trübung auswählen und die Spülung auf dem Server speichern. Erst danach wird ACK gesendet.</p>' : job && !job.savedId ? '<p class="ble-hint">Warte auf die Status-LED am ESP32 und frage dann die Messdaten ab. Das Ergebnis bleibt bis zur erfolgreichen Speicherung auf dem Gerät.</p>' : ""}${ble.error ? `<p class="ble-error" role="status">${esc(ble.error)}</p>` : ""}${job && !job.savedId ? '<button type="button" class="text-link ble-abandon" data-ble-action="recover">Server-Speicherstatus prüfen</button><button type="button" class="text-link ble-abandon" data-ble-action="abandon">Lokalen Auftrag verwerfen</button>' : ""}`;
 }
 function updateBlePanels() {
   document.querySelectorAll("[data-ble-panel]").forEach((panel) => {
     const context = panel.dataset.blePanel === "form" ? activeBleForm : null;
     panel.innerHTML = blePanel(context);
-    const support = panel.querySelector("[data-ble-cancel-support]");
-    if (support)
-      support.onchange = () => {
-        ble.cancelSupported = support.checked;
-        updateBlePanels();
-      };
     panel.querySelectorAll("[data-ble-action]").forEach(
       (button) =>
         (button.onclick = async () => {
@@ -820,10 +856,25 @@ function updateBlePanels() {
             const action = button.dataset.bleAction;
             if (action === "connect") await ble.connect();
             else if (action === "disconnect") ble.disconnect();
-            else if (action === "exchange") {
+            else if (action === "exchange" || action === "restart") {
               if (!activeBleForm || context !== activeBleForm)
                 throw Error("Öffne den ausgewählten Spülpunkt erneut.");
-              const result = await ble.exchange(context.point, context.runId);
+              const confirmAbort = (code) =>
+                window.confirm(
+                  `Messung für ${code} läuft bereits oder ist noch offen. Soll sie abgebrochen und anschließend eine neue Messung für ${context.point.code} gestartet werden?`,
+                );
+              const result =
+                action === "restart"
+                  ? await ble.startMeasurement(
+                      context.point,
+                      context.runId,
+                      confirmAbort,
+                    )
+                  : await ble.exchange(
+                      context.point,
+                      context.runId,
+                      confirmAbort,
+                    );
               if (result && context === activeBleForm && modal.open) {
                 for (const key of [
                   "volume",
@@ -946,7 +997,15 @@ function bindActions(root = app) {
           else if (action === "restart") await assignModal(true);
           else if (action === "publish") publishModal();
           else if (action === "delete-list") deleteListModal();
-          else if (action === "reset-password")
+          else if (action === "ack-notes") {
+            await send("/internal-notes/acknowledge", {
+              ids: b.dataset.ids.split(",").map(Number),
+            });
+            toast(
+              "Bemerkungen quittiert. Der Spülpunkt wurde aus den offenen Hinweisen entfernt.",
+            );
+            await render();
+          } else if (action === "reset-password")
             resetPasswordModal(
               users.find((u) => u.id === Number(b.dataset.id)),
             );

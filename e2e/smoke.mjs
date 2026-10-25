@@ -92,7 +92,7 @@ try {
     await closed();
     await expect(page.getByText(code, { exact: true })).toBeVisible();
   }
-  async function documentPoint(code, amount) {
+  async function documentPoint(code, amount, note = "") {
     await page
       .getByRole("row")
       .filter({ has: page.getByText(code, { exact: true }) })
@@ -111,6 +111,8 @@ try {
       .getByLabel("Trübung festgestellt?", { exact: true })
       .selectOption("false");
     assert.doesNotMatch(await page.locator("dialog").textContent(), /Uhrzeit/);
+    if (note)
+      await page.getByLabel("Interne Bemerkung", { exact: false }).fill(note);
     await click("Spülung speichern");
     await closed();
   }
@@ -148,7 +150,8 @@ try {
   await logout();
   await login("lena@spuelplan.local");
   await openList();
-  await documentPoint("UI-002", "2.7");
+  const internalNote = "Hydrant tropft – interne Prüfung erforderlich.";
+  await documentPoint("UI-002", "2.7", internalNote);
   await expect(heading("Spüllisten")).toBeVisible();
   await expect(page.getByRole("link", { name: /UI-Testgebiet/ })).toHaveCount(
     0,
@@ -178,6 +181,10 @@ try {
   await click("Protokolle");
   await expect(heading("Spülprotokolle")).toBeVisible();
   await expect(page.locator("tbody tr")).toHaveCount(2);
+  await expect(
+    page.getByRole("link", { name: /Interne Hinweise/ }),
+  ).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText(internalNote);
   for (const value of await page
     .locator("tbody tr td:last-child")
     .allTextContents())
@@ -210,6 +217,16 @@ try {
     "PASS: Administration speichert und veröffentlicht; Betrachter erhalten danach die datierte Druckliste.",
   );
   await login("admin@spuelplan.local");
+  await openList();
+  await page.getByRole("link", { name: /Interne Hinweise/ }).click();
+  await expect(heading("Interne Hinweise")).toBeVisible();
+  await expect(page.locator(".issue-card")).toContainText(internalNote);
+  await page.screenshot({ path: "/tmp/spuelpilot-notes.png", fullPage: true });
+  await click("Quittieren");
+  await expect(page.locator(".issue-card")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Keine offenen Hinweise", exact: true }),
+  ).toBeVisible();
   await openList();
   await click("Neuen Durchgang freigeben");
   await page.getByRole("checkbox", { name: /Lena Fischer/ }).check();
@@ -252,6 +269,9 @@ try {
   await expect(
     page.getByRole("link", { name: "Geräte & Sensoren", exact: true }),
   ).toHaveCount(0);
+  await page.goto(base + "/#/notes");
+  await expect(heading("Übersicht")).toBeVisible();
+  await expect(page.locator(".issue-card")).toHaveCount(0);
   await page.goto(base + "/#/devices");
   await expect(heading("Übersicht")).toBeVisible();
   await expect(page.locator(".device-flow")).toHaveCount(0);

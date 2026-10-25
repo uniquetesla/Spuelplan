@@ -101,6 +101,9 @@ if (
 db.exec(
   "CREATE UNIQUE INDEX IF NOT EXISTS flushes_request_idx ON flushes(request_id) WHERE request_id IS NOT NULL",
 );
+db.exec(
+  `CREATE TABLE IF NOT EXISTS internal_notes(id INTEGER PRIMARY KEY,flush_id INTEGER NOT NULL UNIQUE REFERENCES flushes(id),content TEXT NOT NULL,acknowledged_at TEXT,acknowledged_by INTEGER REFERENCES users(id));`,
+);
 const setupTokenPath = resolve(dirname(dbPath), "setup-token");
 if (!oneUserExists() && !existsSync(setupTokenPath))
   writeFileSync(setupTokenPath, randomBytes(32).toString("hex"), {
@@ -739,6 +742,60 @@ app.get("/api/flushes", (req, res) => {
     ),
   );
 });
+const internalRole = (req, res, next) =>
+  ["admin", "employee"].includes(req.session.role)
+    ? next()
+    : fail(
+        res,
+        403,
+        "Interne Bemerkungen sind für Betrachter nicht zugänglich.",
+      );
+const noteVisible = (session, id) =>
+  !!one(
+    `SELECT n.id FROM internal_notes n JOIN flushes f ON f.id=n.flush_id JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE n.id=? AND l.deleted_at IS NULL ${session.role === "admin" ? "" : "AND (f.user_id=? OR EXISTS(SELECT 1 FROM assignments a WHERE a.list_id=r.list_id AND a.user_id=?))"}`,
+    id,
+    ...(session.role === "admin" ? [] : [session.user_id, session.user_id]),
+  );
+app.get("/api/internal-notes", internalRole, (req, res) => {
+  const scope =
+    req.session.role === "admin"
+      ? ""
+      : " AND (f.user_id=? OR EXISTS(SELECT 1 FROM assignments a WHERE a.list_id=r.list_id AND a.user_id=?))";
+  res.json(
+    all(
+      `SELECT n.id,n.content,n.acknowledged_at,f.point_id,f.code_snapshot code,f.address_snapshot address,f.employee_snapshot employee,f.flushed_at,r.list_id,r.number run_number,r.name_snapshot list_name FROM internal_notes n JOIN flushes f ON f.id=n.flush_id JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE l.deleted_at IS NULL AND n.acknowledged_at IS NULL${scope} ORDER BY f.flushed_at DESC,n.id DESC`,
+      ...(req.session.role === "admin"
+        ? []
+        : [req.session.user_id, req.session.user_id]),
+    ),
+  );
+});
+app.post("/api/internal-notes/acknowledge", internalRole, (req, res) => {
+  const ids = req.body.ids;
+  if (
+    !Array.isArray(ids) ||
+    ids.length === 0 ||
+    ids.length > 1000 ||
+    ids.some((id) => !Number.isInteger(id))
+  )
+    return fail(res, 400, "Bitte gültige Bemerkungen auswählen.");
+  if (ids.some((id) => !noteVisible(req.session, id)))
+    return fail(
+      res,
+      403,
+      "Mindestens eine Bemerkung ist dir nicht zugänglich.",
+    );
+  transaction(() => {
+    for (const id of new Set(ids))
+      run(
+        "UPDATE internal_notes SET acknowledged_at=?,acknowledged_by=? WHERE id=? AND acknowledged_at IS NULL",
+        new Date().toISOString(),
+        req.session.user_id,
+        id,
+      );
+  });
+  res.json({ ok: true });
+});
 const measurementReceipt = (id) => {
   const record = one(
     "SELECT id,request_id,point_id,run_id,user_id,source,code_snapshot code,target_snapshot target,volume,temperature_before,temperature_after FROM flushes WHERE id=?",
@@ -776,6 +833,16 @@ app.post("/api/points/:id/flushes", (req, res) => {
     return fail(res, 403, "Betrachter können keine Spülungen dokumentieren.");
   const b = req.body,
     source = b.source ?? "manual";
+  if (
+    b.note !== undefined &&
+    (typeof b.note !== "string" || b.note.length > 2000)
+  )
+    return fail(
+      res,
+      400,
+      "Die interne Bemerkung darf maximal 2.000 Zeichen enthalten.",
+    );
+  const note = (b.note ?? "").trim();
   if (!["manual", "esp32"].includes(source))
     return fail(res, 400, "Unbekannte Messwertquelle.");
   if (
@@ -794,6 +861,8 @@ app.post("/api/points/:id/flushes", (req, res) => {
         cached.user_id !== req.session.user_id ||
         cached.point_id !== Number(req.params.id) ||
         cached.source !== source ||
+        (one("SELECT content FROM internal_notes WHERE flush_id=?", cached.id)
+          ?.content ?? "") !== note ||
         cached.volume !== b.volume ||
         cached.temperature_before !== b.temperature_before ||
         cached.temperature_after !== b.temperature_after ||
@@ -884,6 +953,12 @@ app.post("/api/points/:id/flushes", (req, res) => {
       r.id,
       b.request_id ?? null,
     );
+    if (note)
+      run(
+        "INSERT INTO internal_notes(flush_id,content) VALUES(?,?)",
+        Number(inserted.lastInsertRowid),
+        note,
+      );
     finishIfComplete(p.list_id);
     return inserted;
   });

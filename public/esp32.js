@@ -149,9 +149,7 @@ export class Esp32Client extends EventTarget {
     this.deviceStatus = null;
     this.generation = 0;
     this.waiting = null;
-    this.cancelSupported = false;
     this.onDisconnected = () => {
-      this.cancelSupported = false;
       this.generation++;
       this.command = null;
       this.result = null;
@@ -339,7 +337,6 @@ export class Esp32Client extends EventTarget {
     }
   }
   disconnect() {
-    this.cancelSupported = false;
     this.generation++;
     this.rejectWaiting(Error("Bluetooth wurde getrennt."));
     this.command = null;
@@ -415,19 +412,98 @@ export class Esp32Client extends EventTarget {
       this.job.runId === runId
     );
   }
-  async exchange(point, runId) {
+  async startMeasurement(point, runId, confirmAbort) {
     if (!this.connected) throw Error("Verbinde zuerst den ESP32.");
     if (this.busy) throw Error("Eine Bluetooth-Aktion läuft bereits.");
     if (!this.userId) throw Error("Melde dich zuerst an.");
-    if (this.job && !this.matches(point, runId))
-      throw Error(
-        `Auftrag ${this.job.code} ist noch offen. Schließe zuerst diesen Auftrag ab.`,
+    const command = formatCommand(point);
+    if (this.job?.savedId || this.job?.received)
+      throw Error("Speichere und bestätige zuerst das fertige Ergebnis.");
+    this.busy = true;
+    this.error = "";
+    this.changed();
+    try {
+      const status = await this.request(
+        "STATUS",
+        (m) => m.type === "status" || m.type === "none",
       );
-    if (this.job?.savedId)
+      if (status.type === "status") {
+        if (status.state === "READY")
+          throw Error(
+            "Auf dem ESP32 liegt ein fertiges Ergebnis. Bitte zuerst abrufen und speichern.",
+          );
+        if (typeof confirmAbort !== "function")
+          throw Error(
+            `Messung ${status.code} ist noch offen. Vor einem neuen Auftrag muss der Abbruch bestätigt werden.`,
+          );
+        if (!(await confirmAbort(status.code))) return false;
+        if (this.job && this.job.code !== status.code)
+          throw Error(
+            "Der aktive ESP32-Auftrag stimmt nicht mit dem lokalen Auftrag überein. Prüfe zuerst das Gerät.",
+          );
+        if (!this.job) {
+          this.job = {
+            code: status.code,
+            pointId: 0,
+            runId: 0,
+            target: 0,
+            requestId: globalThis.crypto.randomUUID(),
+            received: false,
+            external: true,
+          };
+          this.persist();
+        }
+        this.busy = false;
+        try {
+          await this.cancelMeasurement();
+        } finally {
+          this.busy = true;
+          this.changed();
+        }
+      } else if (this.job) {
+        if (!this.job.cancelPending) {
+          if (typeof confirmAbort !== "function")
+            throw Error(
+              "Ein lokaler Auftrag ist noch offen. Bestätige zuerst den Neustart.",
+            );
+          if (!(await confirmAbort(this.job.code))) return false;
+        }
+      }
+      const existing = await this.getResult();
+      if (existing.type === "result")
+        throw Error(
+          "Auf dem ESP32 liegt noch ein unbestätigtes Ergebnis. Es wird nicht durch einen neuen Auftrag überschrieben.",
+        );
+      this.job = {
+        code: point.code,
+        pointId: point.id,
+        target: point.target,
+        runId,
+        requestId: globalThis.crypto.randomUUID(),
+        received: false,
+      };
+      this.persist();
+      await this.write(command);
+      return null;
+    } catch (error) {
+      this.error = error.message;
+      throw error;
+    } finally {
+      this.busy = false;
+      this.changed();
+    }
+  }
+  async exchange(point, runId, confirmAbort) {
+    if (!this.job || !this.matches(point, runId))
+      return this.startMeasurement(point, runId, confirmAbort);
+    if (!this.connected) throw Error("Verbinde zuerst den ESP32.");
+    if (this.busy) throw Error("Eine Bluetooth-Aktion läuft bereits.");
+    if (!this.userId) throw Error("Melde dich zuerst an.");
+    if (this.job.savedId)
       throw Error(
         "Die Messung ist bereits gespeichert. Bestätige zuerst den Empfang am ESP32.",
       );
-    if (this.job?.cancelPending)
+    if (this.job.cancelPending)
       throw Error(
         "Ein Abbruch ist noch unbestätigt. Prüfe ihn zuerst über Messung abbrechen.",
       );
@@ -435,35 +511,6 @@ export class Esp32Client extends EventTarget {
     this.error = "";
     this.changed();
     try {
-      if (!this.job) {
-        formatCommand(point);
-        if (
-          this.deviceStatus &&
-          ["WAIT_FLOW", "COUNTDOWN", "MEASURING"].includes(
-            this.deviceStatus.state,
-          )
-        )
-          throw Error(
-            "Auf dem ESP32 läuft bereits eine Messung. Ein neuer Auftrag wird nicht übertragen.",
-          );
-        const existing = await this.getResult();
-        if (existing.type === "result")
-          throw Error(
-            "Auf dem ESP32 liegt noch ein unbestätigtes Ergebnis. Es wird nicht durch einen neuen Auftrag überschrieben.",
-          );
-        this.job = {
-          code: point.code,
-          pointId: point.id,
-          target: point.target,
-          runId,
-          requestId: globalThis.crypto.randomUUID(),
-          received: false,
-        };
-        this.persist();
-        // Keep context on a failed write: the ESP32 may already have received it.
-        await this.write(formatCommand(point));
-        return null;
-      }
       const message = await this.getResult();
       if (message.type === "none") throw new MeasurementNotReady();
       const measurement = parseResult(
@@ -560,10 +607,6 @@ export class Esp32Client extends EventTarget {
   async cancelMeasurement() {
     if (!this.connected) throw Error("Verbinde zuerst denselben ESP32.");
     if (this.busy) throw Error("Eine Übertragung läuft bereits.");
-    if (!this.cancelSupported)
-      throw Error(
-        "Bestätige zuerst, dass die ESP32-Firmware den Abbruch über ID;0 unterstützt.",
-      );
     if (!this.job || this.job.savedId || this.job.received)
       throw Error(
         "Ein fertiges oder bereits gespeichertes Ergebnis darf nicht abgebrochen werden. Bitte speichern und bestätigen.",

@@ -115,4 +115,14 @@ Betrachter sehen **Geräte & Sensoren** nicht; auch der direkte Aufruf dieses Be
 
 ### Messung abbrechen
 
-Im laufenden BLE-Auftrag steht **Messung abbrechen** zur Verfügung. Es wird das vorhandene Auftragsformat mit der Sondermenge null verwendet, etwa `SP-1024;0`; kein neuer Befehl wird eingeführt. Dazu muss die ESP32-Firmware die [Abbrucherweiterung](docs/esp32-ble.md#messung-abbrechen-ohne-neuen-befehlsnamen) unterstützen und dies pro Verbindung in der Oberfläche bestätigt werden. Ein fertiges, ungespeichertes Ergebnis bleibt geschützt. Der Abbruch erzeugt keinen Spülnachweis und schließt kein Ventil. Er gilt erst nach Gerätebestätigung als erfolgreich; unklare Abbrüche bleiben wiederaufnehmbar.
+Im laufenden BLE-Auftrag steht **Messung abbrechen** zur Verfügung. Es wird das vorhandene Auftragsformat mit der Sondermenge null verwendet, etwa `SP-1024;0`; kein neuer Befehl wird eingeführt. Dazu muss die ESP32-Firmware die [Abbrucherweiterung](docs/esp32-ble.md#messung-abbrechen-ohne-neuen-befehlsnamen) implementieren; ein zusätzlicher Firmware-Check in der Oberfläche entfällt. Ein fertiges, ungespeichertes Ergebnis bleibt geschützt. Der Abbruch erzeugt keinen Spülnachweis und schließt kein Ventil. Er gilt erst nach Gerätebestätigung als erfolgreich; unklare Abbrüche bleiben wiederaufnehmbar.
+
+## Interne Bemerkungen und quittierbare Hinweise
+
+Beim Erfassen einer Spülung kann eine interne Bemerkung mit bis zu 2.000 Zeichen ergänzt werden, etwa zur Meldung eines Defekts. Sie wird zusammen mit dem Protokoll atomar in einer getrennten internen Tabelle gespeichert und nicht an den ESP32 übertragen. Übertragungswiederholungen mit abweichender Bemerkung werden abgewiesen.
+
+**Interne Hinweise** zeigt offene Bemerkungen separat nach Spülpunkt gruppiert und rot hervorgehoben an. Die Administration sieht alle Hinweise; Mitarbeiter sehen ihre eigenen und die Hinweise ihrer freigegebenen Listen, auch nach Übergabe zur Prüfung. Mit **Quittieren** werden genau die angezeigten Bemerkungen quittiert und ausgeblendet. Neu hinzukommende Bemerkungen bleiben offen. Die Texte werden nicht gelöscht; Quittierung, Person und Datum bleiben intern erhalten.
+
+Betrachter sehen weder Menüpunkt noch Hinweis-Markierungen oder Bemerkungstexte. Die Hinweise liegen nicht in der allgemeinen Protokollantwort oder den Speicherbestätigungen; die separate API verweigert Betrachtern den Zugriff. Auch Drucklisten enthalten keine Bemerkungen. Das gilt ebenfalls nach Veröffentlichung eines Durchgangs.
+
+Beim Start einer neuen BLE-Messung fragt SpülPilot vor dem Abbruch eines laufenden Auftrags immer nach. Der Neustart erfolgt nur nach bestätigtem Abbruch; ein abgelehnter oder fehlgeschlagener Abbruch überschreibt den alten Auftrag nicht.

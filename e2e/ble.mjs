@@ -248,12 +248,34 @@ try {
   assert.ok(
     (await page.evaluate(() => window.__ble.commands)).includes("SP-BLE;2.5"),
   );
+  await expect(page.locator("[data-ble-cancel-support]")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Messung abbrechen", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
+  page.once("dialog", (dialog) => dialog.dismiss());
   await page
-    .getByRole("checkbox", { name: /Firmware unterstützt Messabbruch/ })
-    .check();
+    .getByRole("button", { name: "Neue Messung starten", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Messdaten abrufen", exact: true }),
+  ).toBeEnabled();
+  assert.equal(
+    await page.evaluate(() => window.__ble.commands.includes("SP-BLE;0")),
+    false,
+  );
+  page.once("dialog", (dialog) => dialog.accept());
+  await page
+    .getByRole("button", { name: "Neue Messung starten", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Messdaten abrufen", exact: true }),
+  ).toBeEnabled();
+  assert.equal(
+    await page.evaluate(
+      () => window.__ble.commands.filter((c) => c === "SP-BLE;0").length,
+    ),
+    1,
+  );
   page.once("dialog", (dialog) => dialog.accept());
   await page
     .getByRole("button", { name: "Messung abbrechen", exact: true })
@@ -396,7 +418,7 @@ try {
   const commands = await page.evaluate(() =>
     JSON.parse(sessionStorage.getItem("__ble_commands")),
   );
-  assert.equal(commands.filter((c) => c === "SP-BLE;2.5").length, 2);
+  assert.equal(commands.filter((c) => c === "SP-BLE;2.5").length, 3);
   assert.equal(commands.filter((c) => c === "ACK;SP-BLE").length, 1);
   assert.deepEqual(errors, []);
   console.log(
