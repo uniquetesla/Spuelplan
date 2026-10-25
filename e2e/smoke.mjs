@@ -90,14 +90,36 @@ try {
     .fill("Teststraße 42, Berlin");
   await page.getByLabel("Sollmenge in m³", { exact: true }).fill("2.5");
   await page.getByRole("button", { name: "Speichern", exact: true }).click();
-  await page.getByText("UI-001", { exact: true }).waitFor();
+  await page.getByText("UI-001", { exact: true }).first().waitFor();
   await page.getByRole("button", { name: "Freigabe", exact: true }).click();
-  await page.getByRole("checkbox").check();
+  await page.getByRole("checkbox", { name: /Alex Morgan/ }).waitFor();
+  assert.equal(await page.getByRole("checkbox").count(), 2);
+  await page.getByRole("checkbox", { name: /Lena Fischer/ }).check();
+  await page.getByRole("checkbox", { name: /Alex Morgan/ }).check();
   await page.getByRole("button", { name: "Speichern", exact: true }).click();
-  await page.getByText("Lena Fischer", { exact: true }).waitFor();
+  await page.locator("dialog").waitFor({ state: "hidden" });
+  await page
+    .getByRole("button", { name: "Spülung erfassen", exact: true })
+    .waitFor();
+  await page
+    .getByRole("button", { name: "Spülung erfassen", exact: true })
+    .click();
+  await page.getByLabel("Temperatur vorher · °C", { exact: true }).fill("24");
+  await page.getByLabel("Temperatur nachher · °C", { exact: true }).fill("15");
+  await page
+    .getByLabel("Tatsächlich gespülte Menge · m³", { exact: true })
+    .fill("2.6");
+  await page
+    .getByLabel("Trübung festgestellt?", { exact: true })
+    .selectOption("false");
+  assert.doesNotMatch(await page.locator("dialog").textContent(), /Uhrzeit/);
+  await page
+    .getByRole("button", { name: "Spülung speichern", exact: true })
+    .click();
+  await page.locator("dialog").waitFor({ state: "hidden" });
   await logout();
   console.log(
-    "PASS: Administration erstellt Liste und Punkt und gibt gesamte Liste frei.",
+    "PASS: Administration gibt Listen für Administration und Mitarbeiter frei und erfasst selbst eine Spülung.",
   );
   await login("lena@spuelplan.local");
   await page.getByRole("link", { name: /UI-Testgebiet/ }).click();
@@ -119,9 +141,11 @@ try {
     .click();
   await page.locator("dialog").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "Protokolle", exact: true }).click();
-  await page.getByRole("heading", { name: "Spülprotokolle", exact: true }).waitFor();
-  await page.getByText("UI-001", { exact: true }).waitFor();
-  assert.equal(await page.locator("tbody tr").count(), 1);
+  await page
+    .getByRole("heading", { name: "Spülprotokolle", exact: true })
+    .waitFor();
+  await page.getByText("UI-001", { exact: true }).first().waitFor();
+  assert.equal(await page.locator("tbody tr").count(), 2);
   assert.match(await page.locator("tbody").textContent(), /2,7/);
   await logout();
   console.log(
@@ -133,9 +157,19 @@ try {
     0,
   );
   await page.getByRole("link", { name: /Spülprotokolle/ }).click();
-  await page.getByRole("heading", { name: "Spülprotokolle", exact: true }).waitFor();
+  await page
+    .getByRole("heading", { name: "Spülprotokolle", exact: true })
+    .waitFor();
   await page.getByLabel("Protokolle suchen", { exact: true }).fill("UI-001");
-  assert.equal(await page.locator("tbody tr").count(), 1);
+  assert.equal(await page.locator("tbody tr").count(), 2);
+  for (const value of await page
+    .locator("tbody tr td:last-child")
+    .allTextContents())
+    assert.match(value, /^\d{2}\.\d{2}\.\d{4}$/);
+  assert.doesNotMatch(
+    await page.locator(".print-heading").textContent(),
+    /\d{1,2}:\d{2}/,
+  );
   await page.emulateMedia({ media: "print" });
   await page.pdf({
     path: join(directory, "protokoll.pdf"),
@@ -169,6 +203,16 @@ try {
     false,
   );
   await page.screenshot({ path: "/tmp/spuelplan-mobile.png", fullPage: true });
+  await page.getByRole("button", { name: "Menü öffnen" }).click();
+  await page.getByRole("link", { name: "Geräte & Sensoren" }).click();
+  await page
+    .getByRole("heading", { name: "Geräte & Sensoren", exact: true })
+    .waitFor();
+  const flow = await page.locator(".device-flow").textContent();
+  assert.match(flow, /Spülpunkt-ID und Sollmenge/);
+  assert.match(flow, /mindestens 1 m³\/h/);
+  assert.match(flow, /5 Sekunden/);
+  assert.match(flow, /Temperatur nachher automatisch/);
   assert.deepEqual(errors, []);
   console.log(
     "PASS: Mobile Navigation bei 390 px; keine horizontale Seitenverschiebung oder JavaScript-Fehler.",

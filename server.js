@@ -316,14 +316,20 @@ app.get("/api/flushes", (req, res) => {
   );
 });
 app.post("/api/points/:id/flushes", (req, res) => {
-  if (req.session.role !== "employee")
-    return fail(res, 403, "Nur Mitarbeiter können Spülungen dokumentieren.");
+  if (!["admin", "employee"].includes(req.session.role))
+    return fail(res, 403, "Betrachter können keine Spülungen dokumentieren.");
   const p = one(
     "SELECT * FROM points WHERE id=? AND active=1",
     Number(req.params.id),
   );
   if (!p) return fail(res, 404, "Spülpunkt nicht gefunden.");
-  if (!canList(req.session, p.list_id))
+  if (
+    !one(
+      "SELECT 1 FROM assignments WHERE list_id=? AND user_id=?",
+      p.list_id,
+      req.session.user_id,
+    )
+  )
     return fail(res, 403, "Diese Liste ist dir nicht freigegeben.");
   const b = req.body;
   for (const k of ["temperature_before", "temperature_after", "volume"])
@@ -411,12 +417,16 @@ app.put("/api/lists/:id/assignments", admin, (req, res) => {
       (x) =>
         !Number.isInteger(x) ||
         !one(
-          "SELECT 1 FROM users WHERE id=? AND role='employee' AND active=1",
+          "SELECT 1 FROM users WHERE id=? AND role IN ('admin','employee') AND active=1",
           x,
         ),
     )
   )
-    return fail(res, 400, "Bitte gültige Mitarbeiter auswählen.");
+    return fail(
+      res,
+      400,
+      "Bitte aktive Benutzer aus Administration oder Mitarbeitern auswählen.",
+    );
   transaction(() => {
     run("DELETE FROM assignments WHERE list_id=?", id);
     for (const uid of new Set(ids))
@@ -515,7 +525,7 @@ app.put("/api/users/:id", admin, (req, res) => {
     );
     if (b.password)
       run("UPDATE users SET password=? WHERE id=?", hash(b.password), id);
-    if (b.role !== "employee" || !b.active)
+    if (b.role === "viewer" || !b.active)
       run("DELETE FROM assignments WHERE user_id=?", id);
     if (b.password || !b.active || existing.role !== b.role)
       run("DELETE FROM sessions WHERE user_id=?", id);
