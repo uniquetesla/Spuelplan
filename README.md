@@ -126,3 +126,9 @@ Beim Erfassen einer Spülung kann eine interne Bemerkung mit bis zu 2.000 Zeiche
 Betrachter sehen weder Menüpunkt noch Hinweis-Markierungen oder Bemerkungstexte. Die Hinweise liegen nicht in der allgemeinen Protokollantwort oder den Speicherbestätigungen; die separate API verweigert Betrachtern den Zugriff. Auch Drucklisten enthalten keine Bemerkungen. Das gilt ebenfalls nach Veröffentlichung eines Durchgangs.
 
 Beim Start einer neuen BLE-Messung fragt SpülPilot vor dem Abbruch eines laufenden Auftrags immer nach. Der Neustart erfolgt nur nach bestätigtem Abbruch; ein abgelehnter oder fehlgeschlagener Abbruch überschreibt den alten Auftrag nicht.
+
+### Gespeicherte Spüllisten
+
+Nach dem letzten offenen Spülpunkt wechselt der Durchlauf zur Prüfung. Sämtliche Bearbeitungsfreigaben für Mitarbeiter und Administration werden entfernt. Erst die Administration veröffentlicht den geprüften Durchlauf zur Betrachtung.
+
+Betrachter sehen jeden veröffentlichten Durchlauf als eigene Spülliste mit dem Datum der Freigabe zur Betrachtung. Zwei Durchläufe derselben Liste erscheinen als zwei Einträge. Beim Öffnen werden ausschließlich die Messungen dieses Durchlaufs mit ihren ursprünglichen Messdaten angezeigt (Datum ohne Uhrzeit). Die Liste lässt sich direkt ausdrucken. Gespeicherte Durchläufe bleiben beim Neustart erhalten; für den neuen Durchlauf müssen berechtigte Personen neu ausgewählt werden.

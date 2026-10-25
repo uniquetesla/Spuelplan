@@ -178,6 +178,10 @@ try {
   await logout();
   await login("betrachter@spuelplan.local");
   await openList();
+  await expect(page.locator(".subtitle")).toContainText(
+    "Zur Betrachtung freigegeben am",
+  );
+  await expect(page.locator("tbody tr")).toHaveCount(2);
   await click("Protokolle");
   await expect(heading("Spülprotokolle")).toBeVisible();
   await expect(page.locator("tbody tr")).toHaveCount(2);
@@ -229,12 +233,15 @@ try {
   ).toBeVisible();
   await openList();
   await click("Neuen Durchgang freigeben");
+  await expect(
+    page.locator('dialog input[name="assignee"]:checked'),
+  ).toHaveCount(0);
   await page.getByRole("checkbox", { name: /Lena Fischer/ }).check();
   await click("Speichern");
   await closed();
   await expect(
     page.getByRole("button", { name: "Spülung erfassen", exact: true }),
-  ).toHaveCount(2);
+  ).toHaveCount(0);
   await expect(page.getByText("Durchgang 2", { exact: true })).toBeVisible();
   await logout();
   await login("lena@spuelplan.local");
@@ -246,7 +253,7 @@ try {
   await logout();
   await login("betrachter@spuelplan.local");
   await openList();
-  await expect(page.getByText("Durchgang 1", { exact: true })).toBeVisible();
+  await expect(page.locator(".subtitle")).toContainText("Durchgang 1");
   await click("Protokolle");
   await expect(heading("Spülprotokolle")).toBeVisible();
   await expect(page.locator("tbody tr")).toHaveCount(2);
@@ -254,6 +261,48 @@ try {
   await expect(page.locator("tbody tr")).toHaveCount(2);
   console.log(
     "PASS: Neuer Durchgang setzt Bearbeitungsstand zurück; veröffentlichte Historie bleibt unverändert sichtbar.",
+  );
+  await logout();
+  await login("lena@spuelplan.local");
+  await openList();
+  await documentPoint("UI-002", "3.1");
+  await logout();
+  await login("admin@spuelplan.local");
+  await openList();
+  await expect(
+    page.getByText("Noch keine Personen", { exact: true }),
+  ).toBeVisible();
+  await click("Speichern & für Betrachter freigeben");
+  await click("Speichern & freigeben");
+  await closed();
+  await logout();
+  await login("betrachter@spuelplan.local");
+  await page.goto(base + "/#/lists");
+  const archiveCards = page
+    .locator(".list-card")
+    .filter({ hasText: "UI-Testgebiet" });
+  await expect(archiveCards).toHaveCount(2);
+  for (let index = 0; index < 2; index++) {
+    await expect(archiveCards.nth(index)).toContainText(
+      "Zur Betrachtung freigegeben am",
+    );
+    await archiveCards.nth(index).click();
+    await expect(heading("UI-Testgebiet")).toBeVisible();
+    await expect(page.locator("tbody tr")).toHaveCount(2);
+    await expect(page.locator(".subtitle")).toContainText(
+      `Durchgang ${2 - index}`,
+    );
+    await expect(
+      page.locator("tbody tr").filter({ hasText: "UI-001" }),
+    ).toContainText(index === 0 ? "2,8" : "2,6");
+    await page.goto(base + "/#/lists");
+  }
+  await page.screenshot({
+    path: "/tmp/spuelpilot-archive.png",
+    fullPage: true,
+  });
+  console.log(
+    "PASS: Zwei veröffentlichte Durchläufe erscheinen separat mit Freigabedatum und öffnen ausschließlich ihre eigenen Messwerte.",
   );
   await page.setViewportSize({ width: 390, height: 844 });
   await click("Menü öffnen");

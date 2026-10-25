@@ -210,7 +210,7 @@ const statusBadge = (l) =>
 function listCard(l) {
   const completed = l.completed_count,
     total = l.point_count;
-  return `<a class="list-card" href="#/lists/${l.id}"><div class="list-card-top"><div class="folder">${icon("folder")}</div>${statusBadge(l)}</div><h3>${esc(l.name)}</h3><p class="description">${esc(l.description || "Deine Spülpunkte an einem Ort")}</p><div class="progress-label"><span>Durchgang ${l.run_number} · Bearbeitet</span><strong>${completed} / ${total}</strong></div><div class="segments">${Array.from({ length: Math.min(total || 1, 25) }, (_, i) => `<i class="${i < Math.round((completed / (total || 1)) * Math.min(total || 1, 25)) ? "done" : ""}"></i>`).join("")}</div><div class="card-bottom"><span class="person-chip">${l.assignees.length ? `<span class="avatar">${esc(initials(l.assignees[0].name))}</span>${esc(l.assignees[0].name)}${l.assignees.length > 1 ? ` +${l.assignees.length - 1}` : ""}` : `${icon("users")}Noch nicht freigegeben`}</span>${icon("arrow")}</div></a>`;
+  return `<a class="list-card" href="#/lists/${l.id}${user.role === "viewer" ? "?run=" + l.run_id : ""}"><div class="list-card-top"><div class="folder">${icon("folder")}</div>${statusBadge(l)}</div><h3>${esc(l.name)}</h3>${l.published_at ? `<p class="archive-date">Zur Betrachtung freigegeben am <strong>${date(l.published_at)}</strong></p>` : ""}<p class="description">${esc(l.description || "Deine Spülpunkte an einem Ort")}</p><div class="progress-label"><span>Durchgang ${l.run_number} · Bearbeitet</span><strong>${completed} / ${total}</strong></div><div class="segments">${Array.from({ length: Math.min(total || 1, 25) }, (_, i) => `<i class="${i < Math.round((completed / (total || 1)) * Math.min(total || 1, 25)) ? "done" : ""}"></i>`).join("")}</div><div class="card-bottom"><span class="person-chip">${l.assignees.length ? `<span class="avatar">${esc(initials(l.assignees[0].name))}</span>${esc(l.assignees[0].name)}${l.assignees.length > 1 ? ` +${l.assignees.length - 1}` : ""}` : `${icon("users")}${l.status === "active" ? "Noch nicht freigegeben" : "Keine Bearbeitungsfreigaben"}`}</span>${icon("arrow")}</div></a>`;
 }
 function overview() {
   const total = lists.reduce((s, l) => s + l.point_count, 0),
@@ -252,6 +252,18 @@ function listDetail() {
       "Liste nicht gefunden",
       "Diese Liste existiert nicht oder ist nicht für dich freigegeben.",
     );
+  if (user.role === "viewer")
+    return (
+      `<a class="back" href="#/lists">${icon("back")}Zurück zu den Spüllisten</a>` +
+      heading(
+        esc(l.name),
+        `Zur Betrachtung freigegeben am ${date(l.published_at)} · Durchgang ${l.run_number}`,
+        button("Protokolle", "list-reports", "file", true) +
+          button("Liste drucken", "print", "print", true),
+        "GESPEICHERTE SPÜLLISTE",
+      ) +
+      `<div class="print-heading"><h1>${esc(l.name)} · Durchgang ${l.run_number}</h1><p>Zur Betrachtung freigegeben am ${date(l.published_at)}</p></div><section class="panel">${reportTable(flushes.filter((f) => f.run_id === l.run_id))}</section>`
+    );
   return (
     `<a class="back" href="#/lists">${icon("back")}Zurück zu den Spüllisten</a>` +
     heading(
@@ -286,9 +298,13 @@ function pointTable(rows) {
 function reportsPage() {
   const selected =
     new URLSearchParams(location.hash.split("?")[1] || "").get("list") || "";
-  const filtered = selected
-    ? flushes.filter((f) => String(f.list_id) === selected)
-    : flushes;
+  const selectedRun =
+    new URLSearchParams(location.hash.split("?")[1] || "").get("run") || "";
+  const filtered = flushes.filter(
+    (f) =>
+      (!selected || String(f.list_id) === selected) &&
+      (!selectedRun || String(f.run_id) === selectedRun),
+  );
   return (
     heading(
       "Spülprotokolle",
@@ -296,7 +312,7 @@ function reportsPage() {
       button("Liste drucken", "print", "print", true),
       "DOKUMENTATION & NACHWEISE",
     ) +
-    `<div class="print-heading"><h1>Spülprotokoll${selected ? " · " + esc(lists.find((l) => String(l.id) === selected)?.name || "") : ""}</h1><p>Erstellt am ${date(new Date().toISOString())} · ${esc(user.name)} · ${filtered.length} Spülungen</p></div><div class="toolbar"><div class="search">${icon("search")}<input id="report-search" type="search" placeholder="ID, Adresse oder Mitarbeiter suchen …" aria-label="Protokolle suchen"></div><select id="report-list" aria-label="Spülliste filtern"><option value="">Alle Spüllisten</option>${lists.map((l) => `<option value="${l.id}" ${String(l.id) === selected ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select><select id="report-run" aria-label="Durchgang filtern"><option value="">Alle Durchgänge</option>${[...new Map(flushes.map((f) => [f.run_id, f])).values()].map((f) => `<option value="${f.run_id}">${esc(f.list_name)} · Durchgang ${f.run_number}</option>`).join("")}</select></div><section class="panel" id="report-results">${reportTable(filtered)}</section>`
+    `<div class="print-heading"><h1>Spülprotokoll${selected ? " · " + esc(lists.find((l) => String(l.id) === selected)?.name || "") : ""}</h1><p>Erstellt am ${date(new Date().toISOString())} · ${esc(user.name)} · ${filtered.length} Spülungen</p></div><div class="toolbar"><div class="search">${icon("search")}<input id="report-search" type="search" placeholder="ID, Adresse oder Mitarbeiter suchen …" aria-label="Protokolle suchen"></div><select id="report-list" aria-label="Spülliste filtern"><option value="">Alle Spüllisten</option>${[...new Map(lists.map((l) => [l.id, l])).values()].map((l) => `<option value="${l.id}" ${String(l.id) === selected ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select><select id="report-run" aria-label="Durchgang filtern"><option value="">Alle Durchgänge</option>${[...new Map(flushes.map((f) => [f.run_id, f])).values()].map((f) => `<option value="${f.run_id}" ${String(f.run_id) === selectedRun ? "selected" : ""}>${esc(f.list_name)} · Durchgang ${f.run_number}</option>`).join("")}</select></div><section class="panel" id="report-results">${reportTable(filtered)}</section>`
   );
 }
 function notesPage() {
@@ -383,8 +399,17 @@ async function render() {
       if (version !== loadVersion) return;
       layout(usersPage(), "users");
     } else if (section === "lists" && parts[1]) {
-      currentList = lists.find((l) => l.id === Number(parts[1]));
-      points = currentList ? await api(`/lists/${currentList.id}/points`) : [];
+      const requestedRun = new URLSearchParams(
+        location.hash.split("?")[1] || "",
+      ).get("run");
+      currentList = lists.find(
+        (l) =>
+          l.id === Number(parts[1]) &&
+          (!requestedRun || l.run_id === Number(requestedRun)),
+      );
+      points = currentList
+        ? await api(`/lists/${currentList.id}/points?run=${currentList.run_id}`)
+        : [];
       if (version !== loadVersion) return;
       layout(listDetail(), "lists");
       document
@@ -531,7 +556,7 @@ function pointModal(p) {
         "number",
         'required min="0.001" max="1000000" step="any" placeholder="z. B. 2,5"',
       ) +
-      `<div class="field"><label for="f-list_id">Spülliste</label><select id="f-list_id" name="list_id">${lists.map((l) => `<option value="${l.id}" ${l.id === (p?.list_id || currentList?.id) ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div>`,
+      `<div class="field"><label for="f-list_id">Spülliste</label><select id="f-list_id" name="list_id">${[...new Map(lists.map((l) => [l.id, l])).values()].map((l) => `<option value="${l.id}" ${l.id === (p?.list_id || currentList?.id) ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div>`,
     async (data) => {
       await send(
         p ? "/points/" + p.id : "/points",
@@ -550,7 +575,7 @@ async function assignModal(restart = false) {
   showModal(
     restart ? "Neuen Durchgang freigeben" : "Liste freigeben",
     esc(currentList.name),
-    `<p class="subtitle modal-intro">${restart ? "Der gespeicherte Durchgang bleibt unverändert für Betrachter erhalten. Alle Punkte werden im neuen Durchgang wieder offen. " : ""}Administration und Mitarbeiter können für diese Liste freigegeben werden. Betrachter sehen nur gespeicherte und freigegebene Durchgänge.</p>${eligibleUsers.map((u) => `<label class="checkbox-row"><input type="checkbox" name="assignee" value="${u.id}" ${currentList.assignees.some((a) => a.id === u.id) ? "checked" : ""}><span><strong>${esc(u.name)}</strong><small>${esc(u.email)} · ${roleName[u.role]}</small></span></label>`).join("") || '<div class="notice">Es sind keine aktiven Benutzer aus Administration oder Mitarbeitern verfügbar.</div>'}`,
+    `<p class="subtitle modal-intro">${restart ? "Der gespeicherte Durchgang bleibt unverändert für Betrachter erhalten. Alle Punkte werden im neuen Durchgang wieder offen. " : ""}Administration und Mitarbeiter können für diese Liste freigegeben werden. Betrachter sehen nur gespeicherte und freigegebene Durchgänge.</p>${eligibleUsers.map((u) => `<label class="checkbox-row"><input type="checkbox" name="assignee" value="${u.id}" ${!restart && currentList.assignees.some((a) => a.id === u.id) ? "checked" : ""}><span><strong>${esc(u.name)}</strong><small>${esc(u.email)} · ${roleName[u.role]}</small></span></label>`).join("") || '<div class="notice">Es sind keine aktiven Benutzer aus Administration oder Mitarbeitern verfügbar.</div>'}`,
     async (data, form) => {
       await send(
         `/lists/${currentList.id}/${restart ? "restart" : "assignments"}`,
@@ -1013,7 +1038,8 @@ function bindActions(root = app) {
           else if (action === "edit-user")
             userModal(users.find((u) => u.id === Number(b.dataset.id)));
           else if (action === "list-reports")
-            location.hash = "#/reports?list=" + currentList.id;
+            location.hash =
+              "#/reports?list=" + currentList.id + "&run=" + currentList.run_id;
           else if (action === "print") window.print();
         } catch (err) {
           toast(err.message);

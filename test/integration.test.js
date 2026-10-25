@@ -262,8 +262,9 @@ test("Letzter Punkt übergibt Liste automatisch zur Prüfung und sperrt weitere 
     403,
   );
   assert.equal((await lists(admin)).data[0].status, "review");
+  assert.deepEqual((await lists(admin)).data[0].assignees, []);
   assert.deepEqual((await lists(viewer)).data, []);
-  assert.equal((await flush(p1, admin)).status, 409);
+  assert.equal((await flush(p1, admin)).status, 403);
   assert.equal(
     (
       await request(`/lists/${list}/restart`, {
@@ -367,6 +368,19 @@ test("Neuer Durchgang startet bei null, alte veröffentlichte Nachweise bleiben 
   ).data;
   assert.deepEqual(hidden, []);
   assert.equal(
+    (
+      await request(`/lists/${list}/points?run=${active.run_id}`, {
+        session: viewer,
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (await request(`/lists/${list}/points?run=9999999`, { session: viewer }))
+      .status,
+    403,
+  );
+  assert.equal(
     (await request(`/lists/${list}/runs`, { session: viewer })).data.length,
     1,
   );
@@ -395,7 +409,30 @@ test("Zweiter Abschluss speichert separate Historie mit eigenen Punkt-Snapshots"
     (await request(`/lists/${list}/runs`, { session: viewer })).data.length,
     2,
   );
-  assert.equal((await lists(viewer)).data[0].run_number, 2);
+  const archives = (await lists(viewer)).data;
+  assert.equal(archives[0].run_number, 2);
+  assert.equal(archives.length, 2);
+  assert.equal(archives[0].id, archives[1].id);
+  assert.notEqual(archives[0].run_id, archives[1].run_id);
+  for (const archive of archives) {
+    assert.ok(Number.isFinite(Date.parse(archive.published_at)));
+    assert.deepEqual(archive.assignees, []);
+    const detail = await request(
+      `/lists/${list}/points?run=${archive.run_id}`,
+      { session: viewer },
+    );
+    assert.equal(detail.status, 200);
+    assert.equal(
+      detail.data.find((p) => p.id === p1).code,
+      archive.run_number === 1 ? "SP-1" : "SP-NEU",
+    );
+    const measurements = (
+      await request(`/flushes?run=${archive.run_id}`, { session: viewer })
+    ).data;
+    assert.equal(measurements.length, 2);
+    assert.ok(measurements.every((f) => f.run_id === archive.run_id));
+  }
+  assert.deepEqual((await lists(admin)).data[0].assignees, []);
 });
 test("Rollen- und Freigabeänderungen schützen aktive Listen weiterhin", async () => {
   assert.equal(
