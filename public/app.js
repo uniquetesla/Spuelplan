@@ -42,14 +42,13 @@ const esc = (x) =>
   );
 const number = (x, d = 3) =>
   new Intl.NumberFormat("de-DE", { maximumFractionDigits: d }).format(x || 0);
-const date = (x, time = false) =>
+const date = (x) =>
   x
     ? new Date(x).toLocaleDateString("de-DE", {
         timeZone: "Europe/Berlin",
         day: "2-digit",
         month: "2-digit",
         year: "numeric",
-        ...(time ? { hour: "2-digit", minute: "2-digit" } : {}),
       })
     : "Noch keine Spülung";
 const initials = (name) =>
@@ -76,6 +75,9 @@ let user,
 const app = document.querySelector("#app"),
   modal = document.querySelector("#modal");
 const isAdmin = () => user?.role === "admin";
+const canDocument = () =>
+  ["admin", "employee"].includes(user?.role) &&
+  currentList?.assignees.some((a) => a.id === user.id);
 const button = (label, action, ic = "plus", secondary = false) =>
   `<button class="button ${secondary ? "secondary" : ""}" data-action="${action}">${icon(ic)}${label}</button>`;
 async function api(path, options = {}) {
@@ -90,6 +92,7 @@ async function api(path, options = {}) {
   const data = await response.json();
   if (!response.ok) {
     if (response.status === 401 && user) {
+      ++loadVersion;
       user = null;
       csrf = null;
       renderAuth();
@@ -196,7 +199,7 @@ function reportTable(rows, compact = false) {
       "Noch keine Spülungen",
       "Sobald eine Spülung dokumentiert wird, findest du hier das Protokoll.",
     );
-  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th>${compact ? "" : "<th>Soll m³</th>"}<th>Ist m³</th>${compact ? "" : "<th>Temp. vorher</th><th>Temp. nachher</th>"}<th>Trübung</th><th>Mitarbeiter</th><th>Datum</th></tr></thead><tbody>${rows.map((f) => `<tr><td><span class="point-id">${esc(f.code)}</span></td><td><strong>${esc(f.address)}</strong>${compact ? `<span class="sub">${esc(f.list_name)}</span>` : ""}</td>${compact ? "" : `<td>${number(f.target)}</td>`}<td><strong>${number(f.volume)}${compact ? " m³" : ""}</strong></td>${compact ? "" : `<td>${number(f.temperature_before)} °C</td><td>${number(f.temperature_after)} °C</td>`}<td><span class="badge ${f.turbidity ? "amber" : "green"}">${f.turbidity ? "Ja" : "Nein"}</span></td><td>${esc(f.employee)}</td><td>${date(f.flushed_at, !compact)}</td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th>${compact ? "" : "<th>Soll m³</th>"}<th>Ist m³</th>${compact ? "" : "<th>Temp. vorher</th><th>Temp. nachher</th>"}<th>Trübung</th><th>Mitarbeiter</th><th>Datum</th></tr></thead><tbody>${rows.map((f) => `<tr><td><span class="point-id">${esc(f.code)}</span></td><td><strong>${esc(f.address)}</strong>${compact ? `<span class="sub">${esc(f.list_name)}</span>` : ""}</td>${compact ? "" : `<td>${number(f.target)}</td>`}<td><strong>${number(f.volume)}${compact ? " m³" : ""}</strong></td>${compact ? "" : `<td>${number(f.temperature_before)} °C</td><td>${number(f.temperature_after)} °C</td>`}<td><span class="badge ${f.turbidity ? "amber" : "green"}">${f.turbidity ? "Ja" : "Nein"}</span></td><td>${esc(f.employee)}</td><td>${date(f.flushed_at)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 function listsPage() {
   return (
@@ -226,7 +229,7 @@ function listDetail() {
         : button("Protokolle", "list-reports", "file", true),
       "DEINE SPÜLLISTE",
     ) +
-    `<div class="detail-strip"><div><small>Spülpunkte</small><strong>${l.point_count} angelegt</strong></div><div><small>Dokumentiert</small><strong>${l.completed_count} von ${l.point_count} Punkten</strong></div><div><small>Freigegeben für</small><strong>${esc(l.assignees.map((a) => a.name).join(", ") || "Noch keine Mitarbeiter")}</strong></div><div><small>Letzte Spülung</small><strong>${date(l.last_flush)}</strong></div></div><div class="section-head"><div><h2>Spülpunkte</h2><p>Wähle einen Punkt für Details${user.role === "employee" ? " und die nächste Spülung" : ""}.</p></div>${isAdmin() ? `<div class="actions"><button class="text-link" data-action="edit-list">${icon("edit")}Liste bearbeiten</button><button class="text-link" data-action="list-reports">${icon("file")}Protokolle</button></div>` : ""}</div><div class="toolbar"><div class="search">${icon("search")}<input id="point-search" type="search" placeholder="ID oder Adresse suchen …" aria-label="Spülpunkte suchen"></div></div><section class="panel" id="points-results">${pointTable(points)}</section><div class="notice">${icon("info")}<span>„Dokumentiert“ bedeutet: Es gibt mindestens ein Spülprotokoll. Jeder Punkt kann erneut gespült werden; alle bisherigen Einträge bleiben erhalten.</span></div>`
+    `<div class="detail-strip"><div><small>Spülpunkte</small><strong>${l.point_count} angelegt</strong></div><div><small>Dokumentiert</small><strong>${l.completed_count} von ${l.point_count} Punkten</strong></div><div><small>Freigegeben für</small><strong>${esc(l.assignees.map((a) => a.name).join(", ") || "Noch keine Personen")}</strong></div><div><small>Letzte Spülung</small><strong>${date(l.last_flush)}</strong></div></div><div class="section-head"><div><h2>Spülpunkte</h2><p>Wähle einen Punkt für Details${canDocument() ? " und die nächste Spülung" : ""}.</p></div>${isAdmin() ? `<div class="actions"><button class="text-link" data-action="edit-list">${icon("edit")}Liste bearbeiten</button><button class="text-link" data-action="list-reports">${icon("file")}Protokolle</button></div>` : ""}</div><div class="toolbar"><div class="search">${icon("search")}<input id="point-search" type="search" placeholder="ID oder Adresse suchen …" aria-label="Spülpunkte suchen"></div></div><section class="panel" id="points-results">${pointTable(points)}</section><div class="notice">${icon("info")}<span>„Dokumentiert“ bedeutet: Es gibt mindestens ein Spülprotokoll. Jeder Punkt kann erneut gespült werden; alle bisherigen Einträge bleiben erhalten.</span></div>`
   );
 }
 function pointTable(rows) {
@@ -238,7 +241,7 @@ function pointTable(rows) {
         : "Für diese Auswahl sind keine Spülpunkte vorhanden.",
       isAdmin() ? button("Spülpunkt anlegen", "new-point") : "",
     );
-  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th><th>Sollmenge</th><th>Letzte Spülung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((p) => `<tr><td><span class="point-id">${esc(p.code)}</span></td><td><strong>${esc(p.address)}</strong></td><td>${number(p.target)} m³</td><td>${p.last_flush ? date(p.last_flush) : "—"}</td><td><span class="badge ${p.last_flush ? "green" : ""}">${p.last_flush ? "Dokumentiert" : "Noch offen"}</span></td><td><button class="table-action" data-action="${user.role === "employee" ? "flush" : "point-detail"}" data-id="${p.id}">${user.role === "employee" ? "Spülung erfassen" : isAdmin() ? "Bearbeiten" : "Details"}${icon(user.role === "employee" ? "arrow" : isAdmin() ? "edit" : "chevron")}</button></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th><th>Sollmenge</th><th>Letzte Spülung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((p) => `<tr><td><span class="point-id">${esc(p.code)}</span></td><td><strong>${esc(p.address)}</strong></td><td>${number(p.target)} m³</td><td>${p.last_flush ? date(p.last_flush) : "—"}</td><td><span class="badge ${p.last_flush ? "green" : ""}">${p.last_flush ? "Dokumentiert" : "Noch offen"}</span></td><td><div class="actions">${canDocument() ? `<button class="table-action" data-action="flush" data-id="${p.id}">Spülung erfassen ${icon("arrow")}</button>` : ""}${isAdmin() || user.role === "viewer" ? `<button class="table-action" data-action="point-detail" data-id="${p.id}">${isAdmin() ? "Bearbeiten" : "Details"}${icon(isAdmin() ? "edit" : "chevron")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>`;
 }
 function reportsPage() {
   const selected =
@@ -253,7 +256,7 @@ function reportsPage() {
       button("Liste drucken", "print", "print", true),
       "DOKUMENTATION & NACHWEISE",
     ) +
-    `<div class="print-heading"><h1>Spülprotokoll${selected ? " · " + esc(lists.find((l) => String(l.id) === selected)?.name || "") : ""}</h1><p>Erstellt am ${date(new Date().toISOString(), true)} · ${esc(user.name)} · ${filtered.length} Spülungen · Zeiten: Europe/Berlin</p></div><div class="toolbar"><div class="search">${icon("search")}<input id="report-search" type="search" placeholder="ID, Adresse oder Mitarbeiter suchen …" aria-label="Protokolle suchen"></div><select id="report-list" aria-label="Spülliste filtern"><option value="">Alle Spüllisten</option>${lists.map((l) => `<option value="${l.id}" ${String(l.id) === selected ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div><section class="panel" id="report-results">${reportTable(filtered)}</section>`
+    `<div class="print-heading"><h1>Spülprotokoll${selected ? " · " + esc(lists.find((l) => String(l.id) === selected)?.name || "") : ""}</h1><p>Erstellt am ${date(new Date().toISOString())} · ${esc(user.name)} · ${filtered.length} Spülungen</p></div><div class="toolbar"><div class="search">${icon("search")}<input id="report-search" type="search" placeholder="ID, Adresse oder Mitarbeiter suchen …" aria-label="Protokolle suchen"></div><select id="report-list" aria-label="Spülliste filtern"><option value="">Alle Spüllisten</option>${lists.map((l) => `<option value="${l.id}" ${String(l.id) === selected ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div><section class="panel" id="report-results">${reportTable(filtered)}</section>`
   );
 }
 function usersPage() {
@@ -264,7 +267,7 @@ function usersPage() {
       button("Benutzer anlegen", "new-user", "plus"),
       "GEMEINSAM IM EINSATZ",
     ) +
-    `<div class="notice">${icon("shield")}<span><strong>Administration</strong> verwaltet Listen, Spülpunkte und Benutzer. <strong>Mitarbeiter</strong> dokumentieren Spülungen in freigegebenen Listen. <strong>Betrachter</strong> lesen und drucken Protokolle.</span></div><section class="panel"><div class="panel-head"><div><h2>Dein Team</h2><p>${users.length} Benutzerkonten</p></div></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>E-Mail-Adresse</th><th>Rolle</th><th>Status</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td><strong>${esc(u.name)}</strong>${u.id === user.id ? '<span class="sub">Dein Konto</span>' : ""}</td><td>${esc(u.email)}</td><td><span class="badge ${u.role === "admin" ? "blue" : ""}">${roleName[u.role]}</span></td><td><span class="badge ${u.active ? "green" : ""}">${u.active ? "Aktiv" : "Deaktiviert"}</span></td><td><button class="table-action" data-action="edit-user" data-id="${u.id}">Bearbeiten ${icon("edit")}</button></td></tr>`).join("")}</tbody></table></div></section>`
+    `<div class="notice">${icon("shield")}<span><strong>Administration</strong> verwaltet Listen, Spülpunkte und Benutzer. <strong>Administration und Mitarbeiter</strong> dokumentieren Spülungen in ihren freigegebenen Listen. <strong>Betrachter</strong> lesen und drucken Protokolle.</span></div><section class="panel"><div class="panel-head"><div><h2>Dein Team</h2><p>${users.length} Benutzerkonten</p></div></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>E-Mail-Adresse</th><th>Rolle</th><th>Status</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td><strong>${esc(u.name)}</strong>${u.id === user.id ? '<span class="sub">Dein Konto</span>' : ""}</td><td>${esc(u.email)}</td><td><span class="badge ${u.role === "admin" ? "blue" : ""}">${roleName[u.role]}</span></td><td><span class="badge ${u.active ? "green" : ""}">${u.active ? "Aktiv" : "Deaktiviert"}</span></td><td><button class="table-action" data-action="edit-user" data-id="${u.id}">Bearbeiten ${icon("edit")}</button></td></tr>`).join("")}</tbody></table></div></section>`
   );
 }
 function devicesPage() {
@@ -275,7 +278,7 @@ function devicesPage() {
       "",
       "EIN BLICK NACH VORN",
     ) +
-    `<div class="device-card"><div class="device-icon">${icon("bluetooth")}</div><div><span class="badge blue">In Vorbereitung</span><h2>Vom Sensor direkt ins Protokoll.</h2><p>Eine spätere ESP32-Anbindung kann Temperatur und Durchfluss per Bluetooth an dein Smartphone übertragen. Die Werte werden anschließend im Spülformular geprüft und gespeichert.</p><ul><li>Zuordnung zu einem freigegebenen Spülpunkt</li><li>Übernahme von Temperatur und gespülter Menge</li><li>Bestätigung durch den angemeldeten Mitarbeiter</li></ul><div class="notice">${icon("info")}Bluetooth ist noch nicht implementiert. Für die Anbindung werden das BLE-Serviceprofil und die Messwertformate des ESP32 benötigt. Web Bluetooth setzt HTTPS und einen unterstützten Browser voraus; iOS Safari unterstützt es derzeit nicht.</div></div></div>`
+    `<div class="device-card"><div class="device-icon">${icon("bluetooth")}</div><div><span class="badge blue">Geplanter ESP32-Ablauf</span><h2>Vom Spülpunkt zum Messprotokoll.</h2><p>Der ESP32 bleibt während des Spülvorgangs per Bluetooth mit dem Smartphone verbunden. Der vorgesehene Ablauf:</p><ol class="device-flow"><li><strong>Spülpunkt auswählen.</strong> Eine freigegebene Person aus Administration oder Mitarbeitern wählt den Punkt bei bestehender Bluetooth-Verbindung aus.</li><li><strong>Auftrag übertragen.</strong> Spülpunkt-ID und Sollmenge in m³ werden an den ESP32 gesendet und vom Gerät bestätigt.</li><li><strong>Temperatur vorher messen.</strong> Sobald erstmals mindestens 1 m³/h Durchfluss erreicht werden, startet eine Wartezeit von 5 Sekunden. Danach wird die Temperatur vorher erfasst.</li><li><strong>Sollmenge erreichen.</strong> Die gespülte Menge wird ab Beginn dieses Auftrags gezählt. Beim Erreichen oder Überschreiten der Sollmenge wird die Temperatur nachher automatisch erfasst.</li><li><strong>Spüldaten übernehmen.</strong> Temperaturen und tatsächlich gespülte Menge werden dem ausgewählten Punkt zugeordnet. Trübung wird weiterhin mit Ja oder Nein angegeben; das Protokoll zeigt ausschließlich das Datum.</li></ol><div class="notice">${icon("info")}Bluetooth ist noch nicht implementiert. BLE-Serviceprofil und Firmware müssen diesen Ablauf unterstützen. Fehlende Messwerte oder eine unterbrochene Verbindung dürfen kein vollständiges Protokoll erzeugen. Web Bluetooth benötigt HTTPS und einen unterstützten Browser; iOS Safari unterstützt es derzeit nicht.</div></div></div>`
   );
 }
 async function render() {
@@ -336,7 +339,7 @@ async function render() {
         );
         document.querySelector("#report-results").innerHTML = reportTable(rows);
         document.querySelector(".print-heading p").textContent =
-          `Erstellt am ${date(new Date().toISOString(), true)} · ${user.name} · ${rows.length} Spülungen · Zeiten: Europe/Berlin${q ? " · Suche: " + q : ""}`;
+          `Erstellt am ${date(new Date().toISOString())} · ${user.name} · ${rows.length} Spülungen${q ? " · Suche: " + q : ""}`;
         document.querySelector(".print-heading h1").textContent =
           "Spülprotokoll" +
           (id ? " · " + lists.find((l) => String(l.id) === id)?.name : "");
@@ -441,11 +444,13 @@ function pointModal(p) {
 }
 async function assignModal() {
   users = await api("/users");
-  const employees = users.filter((u) => u.role === "employee" && u.active);
+  const eligibleUsers = users.filter(
+    (u) => ["admin", "employee"].includes(u.role) && u.active,
+  );
   showModal(
     "Liste freigeben",
     esc(currentList.name),
-    `<p class="subtitle modal-intro">Ausgewählte Mitarbeiter erhalten Zugriff auf alle aktuellen und künftigen Spülpunkte dieser Liste.</p>${employees.map((u) => `<label class="checkbox-row"><input type="checkbox" name="assignee" value="${u.id}" ${currentList.assignees.some((a) => a.id === u.id) ? "checked" : ""}><span><strong>${esc(u.name)}</strong><small>${esc(u.email)}</small></span></label>`).join("") || '<div class="notice">Lege zunächst einen aktiven Mitarbeiter unter „Team & Zugänge“ an.</div>'}`,
+    `<p class="subtitle modal-intro">Administration und Mitarbeiter können für diese Liste freigegeben werden und anschließend Spülungen dokumentieren. Betrachter bleiben ausschließlich leseberechtigt.</p>${eligibleUsers.map((u) => `<label class="checkbox-row"><input type="checkbox" name="assignee" value="${u.id}" ${currentList.assignees.some((a) => a.id === u.id) ? "checked" : ""}><span><strong>${esc(u.name)}</strong><small>${esc(u.email)} · ${roleName[u.role]}</small></span></label>`).join("") || '<div class="notice">Es sind keine aktiven Benutzer aus Administration oder Mitarbeitern verfügbar.</div>'}`,
     async (data, form) => {
       await send(
         `/lists/${currentList.id}/assignments`,
@@ -509,7 +514,7 @@ function flushModal(p) {
   showModal(
     "Spülung dokumentieren",
     esc(p.code) + " · " + esc(p.address),
-    `<div class="measure-box">${icon("drop")}<div><strong>Geplante Spülmenge</strong><small>${esc(currentList.name)}</small></div><b>${number(p.target)} <small>m³</small></b></div><div class="form-row">${field("Temperatur vorher · °C", "temperature_before", "", "number", 'required min="0" max="100" step="0.1" placeholder="22,0"')}${field("Temperatur nachher · °C", "temperature_after", "", "number", 'required min="0" max="100" step="0.1" placeholder="14,0"')}</div>${field("Tatsächlich gespülte Menge · m³", "volume", "", "number", 'required min="0.001" max="1000000" step="any" placeholder="z. B. 2,6"')}<div class="field"><label for="f-turbidity">Trübung festgestellt?</label><select id="f-turbidity" name="turbidity" required><option value="">Bitte auswählen</option><option value="false">Nein – keine Trübung</option><option value="true">Ja – Trübung vorhanden</option></select></div><div class="notice">${icon("clock")}<span>Datum und Uhrzeit werden beim Speichern automatisch erfasst.<br>Mitarbeiter: <strong>${esc(user.name)}</strong><br>Das Protokoll bleibt als unveränderlicher Nachweis erhalten.</span></div>`,
+    `<div class="measure-box">${icon("drop")}<div><strong>Geplante Spülmenge</strong><small>${esc(currentList.name)}</small></div><b>${number(p.target)} <small>m³</small></b></div><div class="form-row">${field("Temperatur vorher · °C", "temperature_before", "", "number", 'required min="0" max="100" step="0.1" placeholder="22,0"')}${field("Temperatur nachher · °C", "temperature_after", "", "number", 'required min="0" max="100" step="0.1" placeholder="14,0"')}</div>${field("Tatsächlich gespülte Menge · m³", "volume", "", "number", 'required min="0.001" max="1000000" step="any" placeholder="z. B. 2,6"')}<div class="field"><label for="f-turbidity">Trübung festgestellt?</label><select id="f-turbidity" name="turbidity" required><option value="">Bitte auswählen</option><option value="false">Nein – keine Trübung</option><option value="true">Ja – Trübung vorhanden</option></select></div><div class="notice">${icon("clock")}<span>Das Spüldatum wird beim Speichern automatisch eingetragen.<br>Mitarbeiter: <strong>${esc(user.name)}</strong><br>Das Protokoll bleibt als unveränderlicher Nachweis erhalten.</span></div>`,
     async (data) => {
       await send(`/points/${p.id}/flushes`, {
         temperature_before: Number(data.temperature_before),
@@ -544,6 +549,7 @@ function bindActions(root = app) {
             document.querySelector(".menu-backdrop").classList.toggle("open");
           } else if (action === "logout") {
             await send("/logout", {});
+            ++loadVersion;
             user = null;
             csrf = null;
             renderAuth();

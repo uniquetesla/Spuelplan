@@ -1674,3 +1674,14 @@ textarea::placeholder {
   font-size: 13px;
   margin-bottom: 15px;
 }
+
+.device-flow {
+  font-size: 12px;
+  color: #637f91;
+  line-height: 1.9;
+  padding-left: 20px;
+}
+.device-flow li {
+  margin-bottom: 12px;
+  padding-left: 4px;
+}

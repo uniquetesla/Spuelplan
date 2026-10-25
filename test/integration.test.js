@@ -300,6 +300,138 @@ test("Änderungen an Stammdaten verändern keinen historischen Nachweis", async 
   assert.equal(f.target, 2.5);
   assert.equal(f.employee, "Mitarbeiter");
 });
+test("Administration erhält Listenfreigaben; Betrachter bleiben ausgeschlossen", async () => {
+  const values = {
+    temperature_before: 21,
+    temperature_after: 15,
+    volume: 5,
+    turbidity: false,
+  };
+  assert.equal(
+    (
+      await request(`/lists/${list}/assignments`, {
+        session: admin,
+        method: "PUT",
+        body: { user_ids: [viewer.user.id] },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(`/points/${point}/flushes`, {
+        session: admin,
+        body: values,
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request(`/lists/${list}/assignments`, {
+        session: admin,
+        method: "PUT",
+        body: { user_ids: [admin.user.id, employee.user.id] },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(`/points/${point}/flushes`, {
+        session: admin,
+        body: values,
+      })
+    ).status,
+    201,
+  );
+  const row = (await request("/flushes", { session: admin })).data[0];
+  assert.equal(row.user_id, admin.user.id);
+  assert.equal(row.employee, "Admin Test");
+  // Editing an administrator must preserve their existing list assignment.
+  assert.equal(
+    (
+      await request(`/users/${admin.user.id}`, {
+        session: admin,
+        method: "PUT",
+        body: {
+          name: "Admin Test",
+          email: "admin@example.de",
+          role: "admin",
+          active: true,
+        },
+      })
+    ).status,
+    200,
+  );
+  assert.ok(
+    (await request("/lists", { session: admin })).data[0].assignees.some(
+      (a) => a.id === admin.user.id,
+    ),
+  );
+  assert.equal(
+    (
+      await request(`/lists/${list}/assignments`, {
+        session: admin,
+        method: "PUT",
+        body: { user_ids: [employee.user.id] },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(`/points/${point}/flushes`, {
+        session: admin,
+        body: values,
+      })
+    ).status,
+    403,
+  );
+  // Downgrading a previously assigned person to viewer removes their assignment.
+  assert.equal(
+    (
+      await request(`/lists/${list}/assignments`, {
+        session: admin,
+        method: "PUT",
+        body: { user_ids: [employee.user.id, other.user.id] },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(`/users/${other.user.id}`, {
+        session: admin,
+        method: "PUT",
+        body: {
+          name: "Ohne Freigabe",
+          email: "other@example.de",
+          role: "viewer",
+          active: true,
+        },
+      })
+    ).status,
+    200,
+  );
+  assert.equal((await request("/me", { session: other })).status, 401);
+  assert.equal(
+    (await request("/lists", { session: admin })).data[0].assignees.some(
+      (a) => a.id === other.user.id,
+    ),
+    false,
+  );
+  other = await login("other@example.de");
+  assert.equal(
+    (
+      await request(`/points/${point}/flushes`, {
+        session: other,
+        body: values,
+      })
+    ).status,
+    403,
+  );
+});
 test("Freigabeentzug und deaktivierte Benutzer verlieren Zugriff", async () => {
   assert.equal(
     (
