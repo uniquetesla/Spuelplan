@@ -588,7 +588,10 @@ function flushModal(p) {
         throw Error(
           "Diese Messung ist bereits gespeichert. Bestätige nur noch den ESP32-Empfang.",
         );
-      if (ble.matches(p, currentList.run_id) && !fromEsp32)
+      if (
+        ble.matches(p, currentList.run_id) &&
+        (!fromEsp32 || ble.job.cancelPending)
+      )
         throw Error("Frage zuerst die vollständigen Messdaten vom ESP32 ab.");
       if (context) context.serverSaving = true;
       updateBlePanels();
@@ -798,12 +801,18 @@ function blePanel(context) {
     : connected
       ? "Verbunden. Wähle einen Spülpunkt für den Messauftrag."
       : "Noch nicht verbunden";
-  return `<div class="ble-head"><div class="ble-title">${icon("bluetooth")}<strong>${connected ? esc(ble.device.name || "SpuelPilot-ESP32") : "SpuelPilot-ESP32"}</strong><span class="badge ${connected ? "green" : ""}">${connected ? "Verbunden" : "Nicht verbunden"}</span></div><div class="actions">${connected ? '<button type="button" class="button secondary" data-ble-action="disconnect">Trennen</button>' : `<button type="button" class="button secondary" data-ble-action="connect" ${!supported || ble.busy ? "disabled" : ""}>${icon("bluetooth")}${ble.busy ? "Verbindet …" : "Bluetooth verbinden"}</button>`}</div></div><p class="ble-status" role="status" aria-live="polite">${esc(status)}</p>${!supported ? '<div class="notice">Web Bluetooth benötigt HTTPS und einen unterstützten Browser, z. B. Chrome auf Android. iOS Safari unterstützt es nicht. Die manuelle Erfassung bleibt verfügbar.</div>' : ""}${job ? `<p class="ble-job">Auftrag <strong>${esc(job.code)}</strong> · ${number(job.target)} m³${job.savedId ? " · Auf Server gespeichert; Empfang bestätigen" : ""}</p>` : ""}${context && !job?.savedId ? `<button type="button" class="button ble-exchange" data-ble-action="exchange" ${!connected || ble.busy || context?.serverSaving || conflict ? "disabled" : ""}>${icon(job ? "drop" : "arrow")}${ble.busy ? "Übertragung läuft …" : job ? "Messdaten abrufen" : "Spülpunkt an ESP32 senden"}</button>` : ""}${job?.savedId ? `<button type="button" class="button" data-ble-action="ack" ${!connected || ble.busy ? "disabled" : ""}>${icon("check")}Empfang am ESP32 bestätigen</button>` : ""}${conflict ? '<p class="ble-hint">Schließe zuerst den offenen ESP32-Auftrag ab. Es wird kein anderer Spülpunkt übertragen.</p>' : ""}${context?.imported ? '<p class="ble-success">Messdaten übernommen. Trübung auswählen und die Spülung auf dem Server speichern. Erst danach wird ACK gesendet.</p>' : job && !job.savedId ? '<p class="ble-hint">Warte auf die Status-LED am ESP32 und frage dann die Messdaten ab. Das Ergebnis bleibt bis zur erfolgreichen Speicherung auf dem Gerät.</p>' : ""}${ble.error ? `<p class="ble-error" role="status">${esc(ble.error)}</p>` : ""}${job && !job.savedId ? '<button type="button" class="text-link ble-abandon" data-ble-action="recover">Server-Speicherstatus prüfen</button><button type="button" class="text-link ble-abandon" data-ble-action="abandon">Lokalen Auftrag verwerfen</button>' : ""}`;
+  return `<div class="ble-head"><div class="ble-title">${icon("bluetooth")}<strong>${connected ? esc(ble.device.name || "SpuelPilot-ESP32") : "SpuelPilot-ESP32"}</strong><span class="badge ${connected ? "green" : ""}">${connected ? "Verbunden" : "Nicht verbunden"}</span></div><div class="actions">${connected ? '<button type="button" class="button secondary" data-ble-action="disconnect">Trennen</button>' : `<button type="button" class="button secondary" data-ble-action="connect" ${!supported || ble.busy ? "disabled" : ""}>${icon("bluetooth")}${ble.busy ? "Verbindet …" : "Bluetooth verbinden"}</button>`}</div></div><p class="ble-status" role="status" aria-live="polite">${esc(status)}</p>${!supported ? '<div class="notice">Web Bluetooth benötigt HTTPS und einen unterstützten Browser, z. B. Chrome auf Android. iOS Safari unterstützt es nicht. Die manuelle Erfassung bleibt verfügbar.</div>' : ""}${job ? `<p class="ble-job">Auftrag <strong>${esc(job.code)}</strong> · ${number(job.target)} m³${job.savedId ? " · Auf Server gespeichert; Empfang bestätigen" : ""}</p>` : ""}${context && !job?.savedId ? `<button type="button" class="button ble-exchange" data-ble-action="exchange" ${!connected || ble.busy || context?.serverSaving || conflict ? "disabled" : ""}>${icon(job ? "drop" : "arrow")}${ble.busy ? "Übertragung läuft …" : job ? "Messdaten abrufen" : "Spülpunkt an ESP32 senden"}</button>` : ""}${job?.savedId ? `<button type="button" class="button" data-ble-action="ack" ${!connected || ble.busy ? "disabled" : ""}>${icon("check")}Empfang am ESP32 bestätigen</button>` : ""}${job && !job.savedId && !job.received ? `<div class="ble-cancel"><label class="checkbox-row"><input type="checkbox" data-ble-cancel-support ${ble.cancelSupported ? "checked" : ""} ${!connected || ble.busy || context?.serverSaving ? "disabled" : ""}><span><strong>Firmware unterstützt Messabbruch über ID;0</strong><small>Nur aktivieren, wenn diese Erweiterung auf dem ESP32 installiert ist.</small></span></label><button type="button" class="button danger" data-ble-action="cancel" ${!connected || ble.busy || !ble.cancelSupported || context?.serverSaving ? "disabled" : ""}>${ble.job.cancelPending ? "Abbruch prüfen / erneut versuchen" : "Messung abbrechen"}</button></div>` : ""}${conflict ? '<p class="ble-hint">Schließe zuerst den offenen ESP32-Auftrag ab. Es wird kein anderer Spülpunkt übertragen.</p>' : ""}${context?.imported ? '<p class="ble-success">Messdaten übernommen. Trübung auswählen und die Spülung auf dem Server speichern. Erst danach wird ACK gesendet.</p>' : job && !job.savedId ? '<p class="ble-hint">Warte auf die Status-LED am ESP32 und frage dann die Messdaten ab. Das Ergebnis bleibt bis zur erfolgreichen Speicherung auf dem Gerät.</p>' : ""}${ble.error ? `<p class="ble-error" role="status">${esc(ble.error)}</p>` : ""}${job && !job.savedId ? '<button type="button" class="text-link ble-abandon" data-ble-action="recover">Server-Speicherstatus prüfen</button><button type="button" class="text-link ble-abandon" data-ble-action="abandon">Lokalen Auftrag verwerfen</button>' : ""}`;
 }
 function updateBlePanels() {
   document.querySelectorAll("[data-ble-panel]").forEach((panel) => {
     const context = panel.dataset.blePanel === "form" ? activeBleForm : null;
     panel.innerHTML = blePanel(context);
+    const support = panel.querySelector("[data-ble-cancel-support]");
+    if (support)
+      support.onchange = () => {
+        ble.cancelSupported = support.checked;
+        updateBlePanels();
+      };
     panel.querySelectorAll("[data-ble-action]").forEach(
       (button) =>
         (button.onclick = async () => {
@@ -827,6 +836,27 @@ function updateBlePanels() {
                 context.imported = true;
                 toast(
                   "ESP32-Messdaten übernommen. Bitte Trübung ergänzen und speichern.",
+                );
+              }
+            } else if (action === "cancel") {
+              if (
+                window.confirm(
+                  `Laufende Messung für ${ble.job.code} abbrechen? Es wird ${ble.job.code};0 gesendet. Ein fertiges Ergebnis bleibt geschützt. Dieser Abbruch schließt kein Ventil.`,
+                )
+              ) {
+                await ble.cancelMeasurement();
+                if (context) {
+                  context.imported = false;
+                  context.seenRequest = null;
+                  for (const key of [
+                    "volume",
+                    "temperature_before",
+                    "temperature_after",
+                  ])
+                    document.querySelector("#f-" + key).value = "";
+                }
+                toast(
+                  "Der ESP32 hat den Messabbruch bestätigt. Der Spülpunkt bleibt offen.",
                 );
               }
             } else if (action === "recover") {

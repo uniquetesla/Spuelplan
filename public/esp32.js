@@ -149,7 +149,9 @@ export class Esp32Client extends EventTarget {
     this.deviceStatus = null;
     this.generation = 0;
     this.waiting = null;
+    this.cancelSupported = false;
     this.onDisconnected = () => {
+      this.cancelSupported = false;
       this.generation++;
       this.command = null;
       this.result = null;
@@ -337,6 +339,7 @@ export class Esp32Client extends EventTarget {
     }
   }
   disconnect() {
+    this.cancelSupported = false;
     this.generation++;
     this.rejectWaiting(Error("Bluetooth wurde getrennt."));
     this.command = null;
@@ -423,6 +426,10 @@ export class Esp32Client extends EventTarget {
     if (this.job?.savedId)
       throw Error(
         "Die Messung ist bereits gespeichert. Bestätige zuerst den Empfang am ESP32.",
+      );
+    if (this.job?.cancelPending)
+      throw Error(
+        "Ein Abbruch ist noch unbestätigt. Prüfe ihn zuerst über Messung abbrechen.",
       );
     this.busy = true;
     this.error = "";
@@ -545,6 +552,76 @@ export class Esp32Client extends EventTarget {
     } catch (error) {
       this.error = error.message;
       throw error;
+    } finally {
+      this.busy = false;
+      this.changed();
+    }
+  }
+  async cancelMeasurement() {
+    if (!this.connected) throw Error("Verbinde zuerst denselben ESP32.");
+    if (this.busy) throw Error("Eine Übertragung läuft bereits.");
+    if (!this.cancelSupported)
+      throw Error(
+        "Bestätige zuerst, dass die ESP32-Firmware den Abbruch über ID;0 unterstützt.",
+      );
+    if (!this.job || this.job.savedId || this.job.received)
+      throw Error(
+        "Ein fertiges oder bereits gespeichertes Ergebnis darf nicht abgebrochen werden. Bitte speichern und bestätigen.",
+      );
+    this.busy = true;
+    this.error = "";
+    this.changed();
+    const finish = () => {
+      this.job = null;
+      this.deviceStatus = null;
+      this.persist();
+    };
+    try {
+      const status = await this.request(
+        "STATUS",
+        (m) => m.type === "status" || m.type === "none",
+      );
+      if (status.type === "none") {
+        if (this.job.cancelPending) {
+          finish();
+          return;
+        }
+        throw Error(
+          "Der ESP32 hat keine laufende Messung bestätigt. Es wird kein Abbruchtelegramm gesendet.",
+        );
+      }
+      if (status.code !== this.job.code)
+        throw Error(
+          "Auf dem ESP32 ist ein anderer Spülpunkt aktiv. Es wird kein Abbruch gesendet.",
+        );
+      if (status.state === "READY") {
+        this.job.cancelPending = false;
+        this.persist();
+        throw Error(
+          "Die Messung ist bereits abgeschlossen. Bitte Messdaten abrufen und speichern; das Ergebnis bleibt erhalten.",
+        );
+      }
+      this.job.cancelPending = true;
+      this.persist();
+      const response = await this.request(
+        `${validId(this.job.code)};0`,
+        (m) => m.type === "ack" || m.type === "status",
+      );
+      if (response.type !== "ack") {
+        if (response.code === this.job.code && response.state === "READY") {
+          this.job.cancelPending = false;
+          this.persist();
+        }
+        throw Error(
+          "Der ESP32 hat den Abbruch nicht bestätigt. Ein inzwischen fertiges Ergebnis bleibt erhalten.",
+        );
+      }
+      finish();
+    } catch (error) {
+      this.error = this.job?.cancelPending
+        ? "Abbruch nicht bestätigt. Die Messung kann noch laufen. Verbinde denselben ESP32 und prüfe den Abbruch erneut."
+        : error.message;
+      throw Error(this.error);
     } finally {
       this.busy = false;
       this.changed();

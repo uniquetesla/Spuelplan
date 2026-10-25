@@ -22,6 +22,7 @@ Nachrichten sind vollständige UTF-8-Strings ohne eckige Klammern und ohne Einhe
 | Richtung     | Nachricht                  | Bedeutung                                                             |
 | ------------ | -------------------------- | --------------------------------------------------------------------- |
 | Browser → RX | `SP-1024;2.50`             | Auftrag mit Spülpunkt-ID und Sollmenge in m³                          |
+| Browser → RX | `SP-1024;0`                | Laufende Messung abbrechen, nur mit bestätigter Firmware-Erweiterung  |
 | Browser → RX | `STATUS`                   | Aktuellen Messzustand erfragen                                        |
 | Browser → RX | `GET`                      | Gespeichertes Ergebnis über TX Notify anfordern                       |
 | Browser → RX | `ACK;SP-1024`              | Bereits auf dem Server gespeichertes Ergebnis bestätigen              |
@@ -60,3 +61,44 @@ Da das vereinbarte Telegramm keine Auftrags- oder Durchgangs-ID enthält, kann d
 ## Browser und betrieblicher Zugriff
 
 Web Bluetooth benötigt HTTPS und einen unterstützten Browser, beispielsweise Chrome auf Android oder kompatible Chromium-Desktop-Browser. iOS Safari unterstützt Web Bluetooth nicht. Für iPhones wäre eine gesonderte native App/Bridge nötig. Ohne Bluetooth bleibt die manuelle Erfassung verfügbar. Betrachter sehen weder den Gerätemenüpunkt noch Bluetooth-Bedienelemente.
+
+## Messung abbrechen, ohne neuen Befehlsnamen
+
+**Protokollerweiterung im vorhandenen Auftragsformat:** `Spülpunkt-ID;0` bedeutet ab jetzt „laufende Messung dieses Punkts abbrechen“. Eine reguläre Sollmenge bleibt immer größer null. Es wird kein `STOP`, `CANCEL` oder anderer neuer Befehl eingeführt. `ACK;ID` behält unverändert seine bisherige Bedeutung und wird weiterhin ausschließlich nach Serverspeicherung verwendet.
+
+Diese Sonderbedeutung war im bisherigen Profil **nicht definiert**. Sie muss in die ESP32-Firmware eingebaut werden, bevor die Funktion benutzt wird. Die Website bietet deshalb eine ausdrückliche Bestätigung **Firmware unterstützt Messabbruch über ID;0** pro Bluetooth-Verbindung. Ohne diese Bestätigung wird kein Nullmengen-Telegramm gesendet. Das ist keine automatische Erkennung der Firmwareversion.
+
+Ablauf und Schutz gegen einen gleichzeitigen Messabschluss:
+
+1. Vor dem Abbruch fragt die Anwendung mit `STATUS` den tatsächlichen Gerätezustand ab. Nur WAIT_FLOW, COUNTDOWN oder MEASURING mit passender ID erlauben das Abbruchtelegramm.
+2. Der Benutzer bestätigt **Messung abbrechen**. Die Anwendung überträgt beispielsweise `SP-1024;0`.
+3. Die Firmware prüft atomar dieselbe ID und ihren aktuellen Zustand. Läuft die Messung noch, beendet sie Messaufzeichnung, Zähler und Countdown, verwirft ausschließlich die unvollständigen Werte, setzt die LED aus und antwortet erst danach mit dem bereits vorhandenen `STATUS;ACK_OK`. Der Punkt bleibt in der Website offen; es entsteht kein Spülprotokoll.
+4. Ist inzwischen READY erreicht, bleibt das fertige Ergebnis unverändert erhalten. Die Firmware antwortet stattdessen mit `STATUS;READY;Spülpunkt-ID`. Die Website verweigert die lokale Abbruchbestätigung und bietet weiterhin Abruf und Speicherung an. Ein fertiges Ergebnis darf auch bei `ID;0` niemals gelöscht werden.
+5. Eine falsche ID darf weder die Messung stoppen noch Daten löschen. Die Firmware meldet den tatsächlichen aktiven Status zurück.
+6. Im Zustand ohne aktiven Auftrag muss `STATUS` mit `NONE` antworten. Geht die Abbruchbestätigung verloren, merkt sich die Website den unbestätigten Abbruch. Nach Wiederverbindung wird er durch eine neue STATUS-Abfrage geprüft: NONE bestätigt den inzwischen beendeten Auftrag, READY schützt ein fertig gewordenes Ergebnis, ein weiterhin laufender passender Zustand erlaubt einen erneuten Abbruchversuch.
+
+**Firmware-Integrationsskizze:** Diese Logik muss im bestehenden RX-Handler für das bereits geparste Zwei-Felder-Telegramm und unter derselben Sperre wie der Messabschluss laufen. Die Funktionsnamen stehen stellvertretend für die vorhandene Sensorimplementierung; sie sind keine fertige ESP32-Firmware.
+
+```cpp
+// Innerhalb der gemeinsamen Sperre von RX-Handler und Messabschluss:
+if (sollKubikmeter == 0.0) {
+    if (spuelpunktId != aktiverSpuelpunktId) {
+        sendeAktuellenStatus();           // keine Zustandsänderung
+    } else if (zustand == READY) {
+        sendeTX("STATUS;READY;" + aktiverSpuelpunktId);
+                                          // gespeichertes Ergebnis behalten!
+    } else if (zustand == WAIT_FLOW || zustand == COUNTDOWN ||
+               zustand == MEASURING) {
+        stoppeMessaufzeichnungUndCountdown();
+        verwerfeNurUnvollstaendigeMesswerte();
+        zustand = IDLE;
+        schalteStatusLEDaus();
+        sendeTX("STATUS;ACK_OK");         // erst nach dem tatsächlichen Stopp
+    } else {
+        sendeTX("NONE");
+    }
+    return;                               // niemals normalen Messstart ausführen
+}
+```
+
+Dies beendet ausschließlich die Messaufzeichnung. Ein Ventil oder der Wasserfluss wird damit **nicht** abgeschaltet. Bei Timeout oder Verbindungsverlust meldet die Website keinen erfolgreichen Abbruch; der laufende Auftrag bleibt bis zur erneuten Prüfung erhalten. Ein Hardwaretest mit dieser Firmwareerweiterung steht noch aus.

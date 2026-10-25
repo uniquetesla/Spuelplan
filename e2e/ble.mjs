@@ -128,6 +128,16 @@ try {
           if (!state.dropAck) notify("STATUS;ACK_OK");
           return;
         }
+        if (text === `${state.code};0`) {
+          if (state.frame) {
+            notify(state.status);
+            return;
+          }
+          state.status = null;
+          state.led = false;
+          notify("STATUS;ACK_OK");
+          return;
+        }
         const [code] = text.split(";");
         state.code = code;
         state.status = "STATUS;WAIT_FLOW;" + code;
@@ -238,6 +248,39 @@ try {
   assert.ok(
     (await page.evaluate(() => window.__ble.commands)).includes("SP-BLE;2.5"),
   );
+  await expect(
+    page.getByRole("button", { name: "Messung abbrechen", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole("checkbox", { name: /Firmware unterstützt Messabbruch/ })
+    .check();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page
+    .getByRole("button", { name: "Messung abbrechen", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: "Spülpunkt an ESP32 senden",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  assert.equal(attempts, 0);
+  assert.equal(
+    await page.evaluate(() => window.__ble.commands.includes("SP-BLE;0")),
+    true,
+  );
+  assert.equal(
+    await page.evaluate(() =>
+      window.__ble.commands.some((c) => c.startsWith("ACK;")),
+    ),
+    false,
+  );
+  await page
+    .getByRole("button", { name: "Spülpunkt an ESP32 senden", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Messdaten abrufen", exact: true }),
+  ).toBeEnabled();
   await page.evaluate(() => window.__ble.complete("FREMD;2.500;12.45;9.82"));
   await page
     .getByRole("button", { name: "Messdaten abrufen", exact: true })
@@ -353,11 +396,11 @@ try {
   const commands = await page.evaluate(() =>
     JSON.parse(sessionStorage.getItem("__ble_commands")),
   );
-  assert.equal(commands.filter((c) => c === "SP-BLE;2.5").length, 1);
+  assert.equal(commands.filter((c) => c === "SP-BLE;2.5").length, 2);
   assert.equal(commands.filter((c) => c === "ACK;SP-BLE").length, 1);
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: BLE-Button, exakte UUIDs und Telegramme, Notify-Import mit zwei Dezimalstellen, falsche ID, Speicherfehler ohne ACK, verlorene Serverantwort ohne Dublette, ACK erst nach Servererfolg und wiederaufnehmbare Bestätigung nach Browserneustart.",
+    "PASS: Bestätigter Messabbruch über ID;0 ohne Protokoll, BLE-Button, exakte UUIDs und Telegramme, Notify-Import mit zwei Dezimalstellen, falsche ID, Speicherfehler ohne ACK, verlorene Serverantwort ohne Dublette, ACK erst nach Servererfolg und wiederaufnehmbare Bestätigung nach Browserneustart.",
   );
 } finally {
   await admin?.dispose();
