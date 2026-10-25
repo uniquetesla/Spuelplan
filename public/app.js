@@ -1,3 +1,4 @@
+import { Esp32Client, STATUS_LABELS } from "./esp32.js";
 const icons = {
   drop: '<path d="M12 3s-6.5 7.1-6.5 11.2a6.5 6.5 0 0 0 13 0C18.5 10.1 12 3 12 3Z"/><path d="M9 15a3 3 0 0 0 3 3"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
@@ -74,6 +75,19 @@ let user,
   loadVersion = 0;
 const app = document.querySelector("#app"),
   modal = document.querySelector("#modal");
+let bleStorage = null;
+try {
+  bleStorage = window.localStorage;
+} catch {}
+const ble = new Esp32Client({ storage: bleStorage });
+let activeBleForm = null;
+modal.addEventListener("close", () => {
+  activeBleForm = null;
+});
+ble.addEventListener("change", () => {
+  updateBlePanels();
+  syncBleForm();
+});
 const isAdmin = () => user?.role === "admin";
 const canDocument = () =>
   ["admin", "employee"].includes(user?.role) &&
@@ -120,6 +134,7 @@ function brand() {
   return `<div class="brand"><span class="brand-icon">${icon("drop")}</span><span>SpülPilot<small>Stadtwerke Heppenheim</small></span></div>`;
 }
 function renderAuth() {
+  ble.bindUser(null);
   app.innerHTML = `<div class="auth"><section class="auth-art">${brand()}<div class="auth-art-main">${icon("drop", "big-drop")}<h1>Unser Wassernetz.<br>Gemeinsam im Blick.</h1><p>Das interne Spülmanagement der Stadtwerke Heppenheim. Ausschließlich für berechtigte Beschäftigte und freigegebene Betrachter.</p></div><div class="auth-art-foot">Stadtwerke Heppenheim · Interner, geschützter Arbeitsbereich</div></section><section class="auth-right"><form class="auth-form" id="auth-form"><div class="login-role">${status.setupRequired ? "Erste Schritte" : "Dein digitaler SpülPilot"}</div><h2>${status.setupRequired ? "Willkommen an Bord." : "Schön, dass du da bist."}</h2><p>${status.setupRequired ? "Richte dein Administrationskonto ein, um Spüllisten und dein Team zu verwalten." : "Melde dich an und bring dein Wassernetz in Bewegung."}</p><div class="form-error" id="auth-error" role="alert"></div>${status.setupRequired ? '<div class="field"><label for="setup-token">Einrichtungsschlüssel</label><input id="setup-token" name="setup_token" type="password" required autocomplete="off"><small>Auf dem Server in data/setup-token hinterlegt.</small></div><div class="field"><label for="name">Dein Name</label><input id="name" name="name" required maxlength="100" autocomplete="name" placeholder="Vor- und Nachname"></div>' : ""}<div class="field"><label for="email">E-Mail-Adresse</label><input id="email" name="email" type="email" required autocomplete="username" maxlength="200" placeholder="name@unternehmen.de"></div><div class="field"><label for="password">Passwort</label><input id="password" name="password" type="password" required ${status.setupRequired ? 'minlength="12"' : ""} maxlength="128" autocomplete="${status.setupRequired ? "new-password" : "current-password"}" placeholder="${status.setupRequired ? "Mindestens 12 Zeichen" : "Dein Passwort"}"></div><button class="button" type="submit">${status.setupRequired ? "Administrationskonto erstellen" : "Anmelden"}${icon("arrow")}</button><div class="auth-security">${icon("lock")}Nur für berechtigte Personen · Keine öffentliche Registrierung</div>${status.demo && !status.setupRequired ? '<div class="auth-demo"><strong>Demo mit Beispieldaten</strong><br>Wähle eine Rolle. Das Demo-Passwort wurde beim Start festgelegt.<div><button type="button" data-demo="admin@spuelplan.local">Administration</button><button type="button" data-demo="lena@spuelplan.local">Mitarbeiter</button><button type="button" data-demo="betrachter@spuelplan.local">Betrachter</button></div></div>' : ""}</form></section></div>`;
   document.querySelectorAll("[data-demo]").forEach(
     (b) =>
@@ -165,8 +180,9 @@ const navItems = () => [
 ];
 function layout(content, section) {
   const nav = navItems();
-  app.innerHTML = `<div class="shell"><div class="menu-backdrop" data-action="menu"></div><aside class="sidebar">${brand()}<div class="nav-label">Arbeitsbereich</div><nav class="nav" aria-label="Hauptnavigation">${nav.map(([id, label, ic]) => `<a href="#/${id}" class="${section === id ? "active" : ""}" ${section === id ? 'aria-current="page"' : ""}>${icon(ic)}${label}${id === "lists" ? `<span class="count">${lists.length}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="water-note">${icon("wave")}<h4>Jeder Tropfen zählt.</h4><p>Spülmanagement für das Trinkwassernetz der Stadtwerke Heppenheim.</p></div><div class="user"><div class="avatar">${esc(initials(user.name))}</div><div><strong>${esc(user.name)}</strong><small>${roleName[user.role]}</small></div><button class="logout" data-action="logout" title="Abmelden" aria-label="Abmelden">${icon("logout")}</button></div></div></aside><main class="main"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-action="menu" aria-label="Menü öffnen">${icon("menu")}</button>Arbeitsbereich ${icon("chevron")} <strong>${nav.find((x) => x[0] === section)?.[1] || "Spüllisten"}</strong></div><div class="top-right"><span class="system"><i class="dot"></i>Mit Datenbank verbunden</span><span class="top-date">${new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span><div class="avatar">${esc(initials(user.name))}</div></div></header><div class="content">${status.demo ? '<div class="demo-notice">Demo-Umgebung · Alle Spülpunkte, Personen und Messwerte sind Beispieldaten.</div>' : ""}${content}<footer class="footer"><span>© ${new Date().getFullYear()} SpülPilot · Stadtwerke Heppenheim</span><span>${icon("shield")}Zugriff geschützt · ${roleName[user.role]}</span></footer></div></main></div>`;
+  app.innerHTML = `<div class="shell"><div class="menu-backdrop" data-action="menu"></div><aside class="sidebar">${brand()}<div class="nav-label">Arbeitsbereich</div><nav class="nav" aria-label="Hauptnavigation">${nav.map(([id, label, ic]) => `<a href="#/${id}" class="${section === id ? "active" : ""}" ${section === id ? 'aria-current="page"' : ""}>${icon(ic)}${label}${id === "lists" ? `<span class="count">${lists.length}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="water-note">${icon("wave")}<h4>Jeder Tropfen zählt.</h4><p>Spülmanagement für das Trinkwassernetz der Stadtwerke Heppenheim.</p></div><div class="user"><div class="avatar">${esc(initials(user.name))}</div><div><strong>${esc(user.name)}</strong><small>${roleName[user.role]}</small></div><button class="logout" data-action="logout" title="Abmelden" aria-label="Abmelden">${icon("logout")}</button></div></div></aside><main class="main"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-action="menu" aria-label="Menü öffnen">${icon("menu")}</button>Arbeitsbereich ${icon("chevron")} <strong>${nav.find((x) => x[0] === section)?.[1] || "Spüllisten"}</strong></div><div class="top-right"><span class="system"><i class="dot"></i>Mit Datenbank verbunden</span><span class="top-date">${new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span><div class="avatar">${esc(initials(user.name))}</div></div></header><div class="content">${status.demo ? '<div class="demo-notice">Demo-Umgebung · Alle Spülpunkte, Personen und Messwerte sind Beispieldaten.</div>' : ""}${ble.job && user.role !== "viewer" ? `<div class="notice no-print">${icon("bluetooth")}<span>ESP32-Auftrag ${esc(ble.job.code)}: ${ble.job.savedId ? "Die Messung ist gespeichert; die Empfangsbestätigung steht noch aus." : "Der Auftrag ist noch offen. Bei unklarem Speicherstatus kannst du die Serverbestätigung prüfen."} <a class="text-link" href="#/devices">Verbindung öffnen und bestätigen</a></span></div>` : ""}${content}<footer class="footer"><span>© ${new Date().getFullYear()} SpülPilot · Stadtwerke Heppenheim</span><span>${icon("shield")}Zugriff geschützt · ${roleName[user.role]}</span></footer></div></main></div>`;
   bindActions();
+  updateBlePanels();
 }
 function heading(
   title,
@@ -296,16 +312,17 @@ function devicesPage() {
   return (
     heading(
       "Geräte & Sensoren",
-      "Die nächste Verbindung für deinen SpülPilot.",
+      "Verbinde SpuelPilot-ESP32 und übertrage Messaufträge und Ergebnisse.",
       "",
-      "EIN BLICK NACH VORN",
+      "BLUETOOTH-MESSERFASSUNG",
     ) +
-    `<div class="device-card"><div class="device-icon">${icon("bluetooth")}</div><div><span class="badge blue">Geplanter ESP32-Ablauf</span><h2>Vom Spülpunkt zum Messprotokoll.</h2><p>Der ESP32 bleibt während des Spülvorgangs per Bluetooth mit dem Smartphone verbunden. Der vorgesehene Ablauf:</p><ol class="device-flow"><li><strong>Spülpunkt auswählen.</strong> Eine freigegebene Person aus Administration oder Mitarbeitern wählt den Punkt bei bestehender Bluetooth-Verbindung aus.</li><li><strong>Auftrag übertragen.</strong> Spülpunkt-ID und Sollmenge in m³ werden an den ESP32 gesendet und vom Gerät bestätigt.</li><li><strong>Temperatur vorher messen.</strong> Sobald erstmals mindestens 1 m³/h Durchfluss erreicht werden, startet eine Wartezeit von 5 Sekunden. Danach wird die Temperatur vorher erfasst.</li><li><strong>Sollmenge erreichen.</strong> Die gespülte Menge wird ab Beginn dieses Auftrags gezählt. Beim Erreichen oder Überschreiten der Sollmenge wird die Temperatur nachher automatisch erfasst.</li><li><strong>Spüldaten übernehmen.</strong> Temperaturen und tatsächlich gespülte Menge werden dem ausgewählten Punkt zugeordnet. Trübung wird weiterhin mit Ja oder Nein angegeben; das Protokoll zeigt ausschließlich das Datum.</li></ol><div class="notice">${icon("info")}Bluetooth ist noch nicht implementiert. BLE-Serviceprofil und Firmware müssen diesen Ablauf unterstützen. Fehlende Messwerte oder eine unterbrochene Verbindung dürfen kein vollständiges Protokoll erzeugen. Web Bluetooth benötigt HTTPS und einen unterstützten Browser; iOS Safari unterstützt es derzeit nicht.</div></div></div>`
+    `<div class="ble-widget" data-ble-panel="device"></div><div class="device-card"><div class="device-icon">${icon("bluetooth")}</div><div><span class="badge blue">SpuelPilot-ESP32 · BLE</span><h2>Vom Spülpunkt zum Messprotokoll.</h2><p>Der ESP32 bleibt während des Spülvorgangs per Bluetooth mit dem Smartphone verbunden. Der vorgesehene Ablauf:</p><ol class="device-flow"><li><strong>Spülpunkt auswählen.</strong> Eine freigegebene Person aus Administration oder Mitarbeitern wählt den Punkt bei bestehender Bluetooth-Verbindung aus.</li><li><strong>Auftrag übertragen.</strong> Spülpunkt-ID und Sollmenge werden mit Semikolon getrennt übertragen, zum Beispiel SP-1024;2.50.</li><li><strong>Temperatur vorher messen.</strong> Sobald erstmals mindestens 1 m³/h Durchfluss erreicht werden, startet eine Wartezeit von 5 Sekunden. Danach wird die Temperatur vorher erfasst.</li><li><strong>Sollmenge erreichen.</strong> Die gespülte Menge wird ab Beginn dieses Auftrags gezählt. Beim Erreichen oder Überschreiten der Sollmenge wird die Temperatur nachher automatisch erfasst.</li><li><strong>Spüldaten übernehmen.</strong> Wenn die Status-LED am ESP32 leuchtet, klickst du auf „Messdaten abrufen“. GET fordert das Ergebnis per Notification an. Menge und Temperaturen werden ins Formular eingetragen; Trübung ergänzt du mit Ja oder Nein.</li></ol><div class="notice">${icon("info")}Erst „Spülung speichern“ sichert die Daten auf dem Server. Danach bestätigt die Anwendung den Empfang mit ACK;Spülpunkt-ID. Der ESP32 löscht erst dann sein Ergebnis und schaltet die LED aus. Bei Speicherfehlern bleibt das Ergebnis auf dem Gerät. Web Bluetooth benötigt HTTPS und einen unterstützten Browser; iOS Safari unterstützt es nicht.</div></div></div>`
   );
 }
 async function render() {
   if (!user) return renderAuth();
   if (user.must_change_password) return renderPasswordRequired();
+  ble.bindUser(user.role === "viewer" ? null : user.id);
   const version = ++loadVersion;
   try {
     const [ls, fs] = await Promise.all([api("/lists"), api("/flushes")]);
@@ -400,6 +417,7 @@ function field(label, name, value = "", type = "text", extra = "") {
   return `<div class="field"><label for="f-${name}">${label}</label><input id="f-${name}" name="${name}" type="${type}" value="${esc(value)}" ${extra}></div>`;
 }
 function showModal(title, subtitle, body, onSubmit, submitLabel = "Speichern") {
+  activeBleForm = null;
   modal.oncancel = null;
   modal.innerHTML = `<form id="modal-form"><header class="modal-head"><div><h2>${title}</h2><p>${subtitle}</p></div><button class="close" type="button" data-close aria-label="Schließen">${icon("close")}</button></header><div class="modal-body"><div class="form-error" id="modal-error" role="alert"></div>${body}</div><footer class="modal-footer"><button type="button" class="button secondary" data-close>Abbrechen</button>${onSubmit ? `<button type="submit" class="button">${icon("check")}${submitLabel}</button>` : ""}</footer></form>`;
   modal
@@ -562,23 +580,70 @@ function flushModal(p) {
   showModal(
     "Spülung dokumentieren",
     esc(p.code) + " · " + esc(p.address),
-    `<div class="measure-box">${icon("drop")}<div><strong>Geplante Spülmenge</strong><small>${esc(currentList.name)}</small></div><b>${number(p.target)} <small>m³</small></b></div><div class="form-row">${field("Temperatur vorher · °C", "temperature_before", "", "number", 'required min="0" max="100" step="0.1" placeholder="22,0"')}${field("Temperatur nachher · °C", "temperature_after", "", "number", 'required min="0" max="100" step="0.1" placeholder="14,0"')}</div>${field("Tatsächlich gespülte Menge · m³", "volume", "", "number", 'required min="0.001" max="1000000" step="any" placeholder="z. B. 2,6"')}<div class="field"><label for="f-turbidity">Trübung festgestellt?</label><select id="f-turbidity" name="turbidity" required><option value="">Bitte auswählen</option><option value="false">Nein – keine Trübung</option><option value="true">Ja – Trübung vorhanden</option></select></div><div class="notice">${icon("clock")}<span>Das Spüldatum wird beim Speichern automatisch eingetragen.<br>Mitarbeiter: <strong>${esc(user.name)}</strong><br>Das Protokoll bleibt als unveränderlicher Nachweis erhalten.</span></div>`,
+    `<div class="measure-box">${icon("drop")}<div><strong>Geplante Spülmenge</strong><small>${esc(currentList.name)}</small></div><b>${number(p.target)} <small>m³</small></b></div><div class="ble-widget" data-ble-panel="form"></div><div class="form-row">${field("Temperatur vorher · °C", "temperature_before", "", "number", 'required min="0" max="100" step="any" placeholder="22,0"')}${field("Temperatur nachher · °C", "temperature_after", "", "number", 'required min="0" max="100" step="any" placeholder="14,0"')}</div>${field("Tatsächlich gespülte Menge · m³", "volume", "", "number", 'required min="0.001" max="1000000" step="any" placeholder="z. B. 2,6"')}<div class="field"><label for="f-turbidity">Trübung festgestellt?</label><select id="f-turbidity" name="turbidity" required><option value="">Bitte auswählen</option><option value="false">Nein – keine Trübung</option><option value="true">Ja – Trübung vorhanden</option></select></div><div class="notice">${icon("clock")}<span>Das Spüldatum wird beim Speichern automatisch eingetragen.<br>Mitarbeiter: <strong>${esc(user.name)}</strong><br>Das Protokoll bleibt als unveränderlicher Nachweis erhalten.</span></div>`,
     async (data) => {
-      const result = await send(`/points/${p.id}/flushes`, {
-        temperature_before: Number(data.temperature_before),
-        temperature_after: Number(data.temperature_after),
-        volume: Number(data.volume),
-        turbidity: data.turbidity === "true",
-      });
-      if (result.status === "review") {
-        location.hash = "#/lists";
-        toast(
-          "Alle Punkte bearbeitet. Die Liste wurde der Administration zur Prüfung übergeben.",
+      const context = activeBleForm;
+      const fromEsp32 = !!context?.imported;
+      if (context?.serverSaved)
+        throw Error(
+          "Diese Messung ist bereits gespeichert. Bestätige nur noch den ESP32-Empfang.",
         );
-      } else toast("Spülung erfolgreich dokumentiert.");
+      if (ble.matches(p, currentList.run_id) && !fromEsp32)
+        throw Error("Frage zuerst die vollständigen Messdaten vom ESP32 ab.");
+      if (context) context.serverSaving = true;
+      updateBlePanels();
+      syncBleForm();
+      try {
+        const result = await send(`/points/${p.id}/flushes`, {
+          temperature_before: Number(data.temperature_before),
+          temperature_after: Number(data.temperature_after),
+          volume: Number(data.volume),
+          turbidity: data.turbidity === "true",
+          ...(fromEsp32
+            ? {
+                source: "esp32",
+                request_id: ble.job.requestId,
+                run_id: context.runId,
+                measurement_point_code: p.code,
+                measurement_target: p.target,
+              }
+            : {}),
+        });
+        if (context) context.serverSaved = true;
+        let pendingAck = false;
+        if (fromEsp32) {
+          // The server's durable receipt is mandatory before sending an ACK.
+          ble.markSaved(result.receipt);
+          try {
+            await ble.acknowledge(result.receipt);
+          } catch {
+            pendingAck = true;
+          }
+        }
+        if (result.status === "review") location.hash = "#/lists";
+        toast(
+          pendingAck
+            ? "Messung gespeichert. Die ESP32-Empfangsbestätigung steht noch aus; bitte unter Geräte & Sensoren fortsetzen."
+            : result.status === "review"
+              ? "Alle Punkte bearbeitet. Die Liste wurde zur Prüfung übergeben."
+              : "Spülung erfolgreich gespeichert.",
+        );
+      } finally {
+        if (context) context.serverSaving = false;
+      }
     },
     "Spülung speichern",
   );
+  activeBleForm = {
+    point: p,
+    runId: currentList.run_id,
+    imported: false,
+    seenRequest: null,
+    serverSaving: false,
+    serverSaved: false,
+  };
+  updateBlePanels();
+  syncBleForm();
 }
 async function pointDetail(p) {
   if (isAdmin() && currentList.status === "active" && !p.completed)
@@ -638,6 +703,7 @@ function accountPage() {
   );
 }
 function renderPasswordRequired() {
+  ble.bindUser(null);
   if (modal.open) modal.close();
   app.innerHTML = `<div class="required-password"><div class="required-card">${brand()}<div class="login-role">Persönlichen Zugang einrichten</div><h1>Neues Passwort festlegen</h1><p class="subtitle">Du bist mit einem Einmalpasswort angemeldet. Vergib zuerst dein eigenes Passwort, um SpülPilot zu verwenden.</p>${passwordForm(true)}</div></div>`;
   bindPasswordForm(true);
@@ -720,6 +786,109 @@ function resetPasswordModal(u) {
     },
     "Einmalpasswort generieren",
   );
+}
+function blePanel(context) {
+  const supported = !!navigator.bluetooth && window.isSecureContext;
+  const connected = ble.connected,
+    job = ble.job,
+    conflict = context && job && !ble.matches(context.point, context.runId);
+  const state = ble.deviceStatus;
+  const status = state
+    ? `${STATUS_LABELS[state.state]} · ${state.code}`
+    : connected
+      ? "Verbunden. Wähle einen Spülpunkt für den Messauftrag."
+      : "Noch nicht verbunden";
+  return `<div class="ble-head"><div class="ble-title">${icon("bluetooth")}<strong>${connected ? esc(ble.device.name || "SpuelPilot-ESP32") : "SpuelPilot-ESP32"}</strong><span class="badge ${connected ? "green" : ""}">${connected ? "Verbunden" : "Nicht verbunden"}</span></div><div class="actions">${connected ? '<button type="button" class="button secondary" data-ble-action="disconnect">Trennen</button>' : `<button type="button" class="button secondary" data-ble-action="connect" ${!supported || ble.busy ? "disabled" : ""}>${icon("bluetooth")}${ble.busy ? "Verbindet …" : "Bluetooth verbinden"}</button>`}</div></div><p class="ble-status" role="status" aria-live="polite">${esc(status)}</p>${!supported ? '<div class="notice">Web Bluetooth benötigt HTTPS und einen unterstützten Browser, z. B. Chrome auf Android. iOS Safari unterstützt es nicht. Die manuelle Erfassung bleibt verfügbar.</div>' : ""}${job ? `<p class="ble-job">Auftrag <strong>${esc(job.code)}</strong> · ${number(job.target)} m³${job.savedId ? " · Auf Server gespeichert; Empfang bestätigen" : ""}</p>` : ""}${context && !job?.savedId ? `<button type="button" class="button ble-exchange" data-ble-action="exchange" ${!connected || ble.busy || context?.serverSaving || conflict ? "disabled" : ""}>${icon(job ? "drop" : "arrow")}${ble.busy ? "Übertragung läuft …" : job ? "Messdaten abrufen" : "Spülpunkt an ESP32 senden"}</button>` : ""}${job?.savedId ? `<button type="button" class="button" data-ble-action="ack" ${!connected || ble.busy ? "disabled" : ""}>${icon("check")}Empfang am ESP32 bestätigen</button>` : ""}${conflict ? '<p class="ble-hint">Schließe zuerst den offenen ESP32-Auftrag ab. Es wird kein anderer Spülpunkt übertragen.</p>' : ""}${context?.imported ? '<p class="ble-success">Messdaten übernommen. Trübung auswählen und die Spülung auf dem Server speichern. Erst danach wird ACK gesendet.</p>' : job && !job.savedId ? '<p class="ble-hint">Warte auf die Status-LED am ESP32 und frage dann die Messdaten ab. Das Ergebnis bleibt bis zur erfolgreichen Speicherung auf dem Gerät.</p>' : ""}${ble.error ? `<p class="ble-error" role="status">${esc(ble.error)}</p>` : ""}${job && !job.savedId ? '<button type="button" class="text-link ble-abandon" data-ble-action="recover">Server-Speicherstatus prüfen</button><button type="button" class="text-link ble-abandon" data-ble-action="abandon">Lokalen Auftrag verwerfen</button>' : ""}`;
+}
+function updateBlePanels() {
+  document.querySelectorAll("[data-ble-panel]").forEach((panel) => {
+    const context = panel.dataset.blePanel === "form" ? activeBleForm : null;
+    panel.innerHTML = blePanel(context);
+    panel.querySelectorAll("[data-ble-action]").forEach(
+      (button) =>
+        (button.onclick = async () => {
+          try {
+            const action = button.dataset.bleAction;
+            if (action === "connect") await ble.connect();
+            else if (action === "disconnect") ble.disconnect();
+            else if (action === "exchange") {
+              if (!activeBleForm || context !== activeBleForm)
+                throw Error("Öffne den ausgewählten Spülpunkt erneut.");
+              const result = await ble.exchange(context.point, context.runId);
+              if (result && context === activeBleForm && modal.open) {
+                for (const key of [
+                  "volume",
+                  "temperature_before",
+                  "temperature_after",
+                ])
+                  document.querySelector("#f-" + key).value = String(
+                    result[key],
+                  );
+                context.imported = true;
+                toast(
+                  "ESP32-Messdaten übernommen. Bitte Trübung ergänzen und speichern.",
+                );
+              }
+            } else if (action === "recover") {
+              const receipt = await api(
+                `/measurement-receipts/${ble.job.requestId}`,
+              );
+              ble.markSaved(receipt);
+              toast(
+                "Messung auf dem Server gefunden. Bitte den ESP32-Empfang bestätigen.",
+              );
+              await render();
+            } else if (action === "ack") {
+              const receipt = await api(`/flushes/${ble.job.savedId}/receipt`);
+              await ble.acknowledge(receipt);
+              toast(
+                "ESP32-Empfang bestätigt. Das Gerät kann den nächsten Auftrag annehmen.",
+              );
+              await render();
+            } else if (action === "abandon") {
+              if (
+                window.confirm(
+                  "Lokalen Auftrag verwerfen? Das sendet keinen Abbruch- oder Löschbefehl an den ESP32. Gerätedaten bleiben erhalten.",
+                )
+              ) {
+                ble.abandon();
+                if (context) {
+                  context.imported = false;
+                  context.seenRequest = null;
+                }
+              }
+            }
+          } catch (error) {
+            ble.error = error.message;
+          }
+          updateBlePanels();
+          syncBleForm();
+        }),
+    );
+  });
+}
+function syncBleForm() {
+  const context = activeBleForm;
+  if (!context || !modal.open) return;
+  const linked = ble.matches(context.point, context.runId);
+  if (linked && context.seenRequest !== ble.job.requestId) {
+    context.seenRequest = ble.job.requestId;
+    context.imported = false;
+    for (const key of ["volume", "temperature_before", "temperature_after"])
+      document.querySelector("#f-" + key).value = "";
+  }
+  for (const key of ["volume", "temperature_before", "temperature_after"])
+    document.querySelector("#f-" + key).readOnly = !!(
+      linked || context.imported
+    );
+  const submit = modal.querySelector("[type=submit]");
+  if (submit)
+    submit.disabled = !!(
+      ble.busy ||
+      context.serverSaving ||
+      context.serverSaved ||
+      (linked && !context.imported)
+    );
 }
 function bindActions(root = app) {
   root.querySelectorAll("[data-action]").forEach(

@@ -70,7 +70,7 @@ npm run dev
 npm test
 ```
 
-Die Integrationstests verwenden temporäre Datenbanken und prüfen Anmeldung, Rechte, den vollständigen Listenablauf über mehrere Durchgänge, Veröffentlichung, historische Snapshots, Löschung, Dublettenschutz und die sichere Migration bestehender Datenbanken.
+Protokoll- und BLE-Client-Tests prüfen Format, Statusmeldungen und Bestätigungsablauf mit einem simulierten Gerät. Die API-Integrationstests verwenden temporäre Datenbanken und prüfen Anmeldung, Rechte, den vollständigen Listenablauf über mehrere Durchgänge, Veröffentlichung, historische Snapshots, Löschung, Dublettenschutz und die sichere Migration bestehender Datenbanken.
 
 Der zusätzliche Browser-Smoke-Test erstellt in einer temporären Datenbank eine Liste samt Punkt, gibt sie frei, dokumentiert als Mitarbeiter eine Spülung, prüft den Betrachter-Ausdruck als PDF und die mobile Navigation:
 
@@ -87,34 +87,15 @@ PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium npm run test:ui
 
 Es gibt keinen separaten Build-Schritt: Express liefert HTML, CSS und JavaScript aus `public/` direkt aus. Browser und Server benötigen zur Laufzeit keine externen Schriftarten, CDNs oder APIs.
 
-## Spätere ESP32-Schnittstelle
+## ESP32 über Bluetooth Low Energy
 
-Bluetooth ist noch **nicht implementiert**. Die Seite **Geräte & Sensoren** erklärt den geplanten Ablauf. Der vorhandene Endpunkt `POST /api/points/:id/flushes` nimmt bereits normalisierte Messwerte entgegen:
+Die Browseranbindung verwendet das vereinbarte Profil von **SpuelPilot-ESP32** und ist im Spülformular sowie unter **Geräte & Sensoren** verfügbar. Nach dem Verbinden wird der Sende-/Abrufbutton aktiv. Aufträge werden als `ID;Sollmenge` geschrieben; GET fordert `ID;Istmenge;Temperatur vorher;Temperatur nachher` per Notification an. Nach der Übernahme ergänzt die Bedienperson die Trübung und speichert das Protokoll.
 
-```json
-{
-  "temperature_before": 22.5,
-  "temperature_after": 14.2,
-  "volume": 2.7,
-  "turbidity": false
-}
-```
+**ACK wird erst nach bestätigter Serverspeicherung gesendet.** Erst dann löscht die Firmware ihr Ergebnis und schaltet ihre Status-LED aus. Bei Speicher- oder Verbindungsfehlern bleiben Gerätedaten erhalten. Wiederholte HTTP-Anfragen werden anhand einer Übertragungs-ID ohne doppelte Protokolle bearbeitet. Ausstehende Bestätigungen sind nach Anmeldung im selben Browser wiederaufnehmbar.
 
-Er setzt eine angemeldete, freigegebene Sitzung der Rolle Administration oder Mitarbeiter, passende Origin und den CSRF-Header voraus. Datum, Benutzer und Herkunft der Aufzeichnung werden serverseitig vergeben; Clients können diese nicht überschreiben. Aktuell ist die Quelle immer `manual`.
+Profil, exakte UUIDs, alle Telegramme, der Messablauf und das Wiederaufnahmeverfahren stehen im [BLE-Vertrag](docs/esp32-ble.md). Web Bluetooth benötigt HTTPS und einen unterstützten Browser. iOS Safari unterstützt es nicht. Die Firmware muss vollständige Nachrichten, Status-LED und Ergebnisaufbewahrung bis zum ACK umsetzen.
 
-Für die eigentliche Integration sind BLE-Service-/Characteristic-UUIDs, Einheiten, Messwertformat, Messbeginn/-ende, Kalibrierung und Wiederverbindungsverhalten mit der Firmware abzustimmen. Anschließend kann ein Bluetooth-Adapter Messwerte ins Formular übertragen und vor dem Speichern durch den Mitarbeiter bestätigen lassen. Zusätzlich sind Idempotenz und eine authentifizierte Quellenerkennung vor automatischen Übertragungen umzusetzen. Web Bluetooth benötigt HTTPS und einen kompatiblen Browser (z. B. Chrome auf Android); iOS Safari unterstützt es nicht. Für iPhones wird daher eine kompatible App-/Bridge-Lösung benötigt.
-
-### Festgelegter Messablauf für die spätere Firmware
-
-1. Das Smartphone ist per Bluetooth mit dem ESP32 verbunden. Eine freigegebene Person wählt einen Spülpunkt aus.
-2. Spülpunkt-ID und Sollmenge in m³ werden als Auftrag an das Gerät übertragen. Das Gerät muss den Auftrag bestätigen; Messwerte gehören eindeutig zu diesem Auftrag.
-3. Die tatsächliche Spülmenge wird ab Beginn dieses Auftrags gezählt. Sobald erstmals ein Durchfluss von **mindestens 1 m³/h** erreicht wird (einschließlich exakt 1 m³/h), beginnt eine **Wartezeit von 5 Sekunden**. Danach wird die Temperatur vorher gemessen und für diesen Auftrag festgehalten.
-4. Sobald die aufsummierte Spülmenge die Sollmenge **erreicht oder überschreitet**, wird die Temperatur nachher automatisch erfasst. Übertragen wird die tatsächlich gemessene Menge, auch wenn sie über der Sollmenge liegt.
-5. Messwerte werden automatisch dem ausgewählten Spülpunkt zugeordnet. Trübung bleibt eine manuelle Ja/Nein-Angabe, solange kein entsprechender Sensor vereinbart ist. Im sichtbaren Protokoll erscheint nur das Spüldatum.
-
-Die 5 Sekunden beziehen sich auf das erstmalige Erreichen der Durchflussschwelle; ein Neustart bei Unterschreitung ist bisher nicht vereinbart. Ist die Sollmenge bereits vor der Vorher-Messung erreicht, fehlen Messwerte oder bricht die Verbindung ab, darf kein vollständiges Protokoll behauptet werden. Ein Wechsel des Spülpunkts während eines laufenden Auftrags muss verhindert bzw. der Auftrag ausdrücklich abgebrochen werden. Gerätezeit, Sequenznummern und eine Auftrags-ID werden für Zuordnung, Wiederverbindung und Schutz vor Doppelübertragungen benötigt; sie werden nicht als Uhrzeit im Benutzerprotokoll angezeigt. Eine Ventilabschaltung ist mit dieser Beschreibung nicht beauftragt.
-
-Dieser Ablauf ist als Integrationsanforderung festgehalten; die aktuelle Website erfasst Messwerte weiterhin manuell und steuert noch kein reales Gerät.
+Die Cloudtests simulieren einen ESP32 einschließlich Notifications, Read, LED-Zustand und Fehlerfällen. Eine Prüfung mit realer Hardware steht noch aus.
 
 ## Interne Erreichbarkeit
 
@@ -130,4 +111,4 @@ Einmalpasswörter sind bewusst einfach, deshalb **10 Minuten gültig**, nur für
 
 Das eigene Administrationspasswort wird unter **Mein Passwort** geändert. Bestehende Benutzerpasswörter können nicht mehr über das allgemeine Bearbeitungsformular gesetzt werden. Neue Benutzer behalten den bisherigen Anlageablauf mit einem mindestens zwölf Zeichen langen Anfangspasswort; bei Bedarf kann danach ein Einmalpasswort erzeugt werden. Bestandskonten bleiben bei der ergänzenden Datenbankmigration unverändert.
 
-Betrachter sehen **Geräte & Sensoren** nicht; auch der direkte Aufruf dieses Bereichs führt zurück zur Übersicht. Die tatsächliche ESP32-Anbindung folgt erst nach Abstimmung des Sende- und Empfangsformats.
+Betrachter sehen **Geräte & Sensoren** nicht; auch der direkte Aufruf dieses Bereichs führt zurück zur Übersicht. Die ESP32-Anbindung folgt dem bestätigten Sende- und Empfangsformat; siehe BLE-Vertrag.
