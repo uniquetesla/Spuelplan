@@ -104,6 +104,24 @@ db.exec(
 db.exec(
   `CREATE TABLE IF NOT EXISTS internal_notes(id INTEGER PRIMARY KEY,flush_id INTEGER NOT NULL UNIQUE REFERENCES flushes(id),content TEXT NOT NULL,acknowledged_at TEXT,acknowledged_by INTEGER REFERENCES users(id));`,
 );
+// Keep deleted measurements for audit and prevent old device requests from resurrecting them.
+for (const table of ["flushes", "list_runs"]) {
+  for (const [column, type] of [
+    ["deleted_at", "TEXT"],
+    ["deleted_by", "INTEGER REFERENCES users(id)"],
+  ]) {
+    if (
+      !db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .some((c) => c.name === column)
+    )
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
+}
+db.exec(
+  "CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
+);
 const setupTokenPath = resolve(dirname(dbPath), "setup-token");
 if (!oneUserExists() && !existsSync(setupTokenPath))
   writeFileSync(setupTokenPath, randomBytes(32).toString("hex"), {
@@ -320,7 +338,7 @@ const currentRun = (id) =>
   );
 const publishedRun = (id) =>
   one(
-    "SELECT * FROM list_runs WHERE list_id=? AND status='published' ORDER BY number DESC LIMIT 1",
+    "SELECT * FROM list_runs WHERE list_id=? AND deleted_at IS NULL AND status='published' ORDER BY number DESC LIMIT 1",
     id,
   );
 const assigned = (userId, listId) =>
@@ -344,18 +362,18 @@ const visibleRun = (session, id, runId = null) => {
         : currentRun(id);
   if (
     !r ||
-    (session.role === "viewer" && r.status !== "published") ||
+    (session.role === "viewer" && (r.status !== "published" || r.deleted_at)) ||
     (session.role === "employee" &&
-      (r.status !== "active" || !assigned(session.user_id, id)))
+      (r.deleted_at || r.status !== "active" || !assigned(session.user_id, id)))
   )
     return null;
   return r;
 };
 const finishIfComplete = (id) => {
   const r = currentRun(id);
-  if (r?.status !== "active") return;
+  if (r?.status !== "active" || r.deleted_at) return;
   const counts = one(
-    "SELECT count(*) total,sum(CASE WHEN EXISTS(SELECT 1 FROM flushes f WHERE f.point_id=p.id AND f.run_id=?) THEN 1 ELSE 0 END) completed FROM points p WHERE list_id=? AND active=1",
+    "SELECT count(*) total,sum(CASE WHEN EXISTS(SELECT 1 FROM flushes f WHERE f.deleted_at IS NULL AND f.point_id=p.id AND f.run_id=?) THEN 1 ELSE 0 END) completed FROM points p WHERE list_id=? AND active=1",
     r.id,
     id,
   );
@@ -620,22 +638,27 @@ app.get("/api/lists", (req, res) => {
     const runs =
       req.session.role === "viewer"
         ? all(
-            "SELECT * FROM list_runs WHERE list_id=? AND status='published' ORDER BY published_at DESC,id DESC",
+            "SELECT * FROM list_runs WHERE list_id=? AND deleted_at IS NULL AND status='published' ORDER BY published_at DESC,id DESC",
             l.id,
           )
         : [visibleRun(req.session, l.id)].filter(Boolean);
     for (const r of runs) {
-      const historical = r.status === "published";
-      const total = historical
-        ? one("SELECT count(*) n FROM run_points WHERE run_id=?", r.id).n
-        : one(
-            "SELECT count(*) n FROM points WHERE list_id=? AND active=1",
-            l.id,
-          ).n;
+      const historical = r.status === "published" || !!r.deleted_at;
+      const total = r.deleted_at
+        ? 0
+        : historical
+          ? one(
+              "SELECT count(*) n FROM run_points rp WHERE run_id=? AND EXISTS(SELECT 1 FROM flushes f WHERE f.run_id=rp.run_id AND f.point_id=rp.point_id AND f.deleted_at IS NULL)",
+              r.id,
+            ).n
+          : one(
+              "SELECT count(*) n FROM points WHERE list_id=? AND active=1",
+              l.id,
+            ).n;
       const completed = historical
         ? total
         : one(
-            "SELECT count(*) n FROM points p WHERE p.list_id=? AND p.active=1 AND EXISTS(SELECT 1 FROM flushes f WHERE f.point_id=p.id AND f.run_id=?)",
+            "SELECT count(*) n FROM points p WHERE p.list_id=? AND p.active=1 AND EXISTS(SELECT 1 FROM flushes f WHERE f.deleted_at IS NULL AND f.point_id=p.id AND f.run_id=?)",
             l.id,
             r.id,
           ).n;
@@ -645,17 +668,18 @@ app.get("/api/lists", (req, res) => {
         description: historical ? r.description_snapshot : l.description,
         run_id: r.id,
         run_number: r.number,
-        status: r.status,
+        status: r.deleted_at ? "deleted" : r.status,
+        deleted_run: !!r.deleted_at,
         published_at: r.published_at,
         completed_at: r.completed_at,
         point_count: total,
         completed_count: completed,
         last_flush: one(
-          "SELECT max(flushed_at) d FROM flushes WHERE run_id=?",
+          "SELECT max(flushed_at) d FROM flushes WHERE deleted_at IS NULL AND run_id=?",
           r.id,
         ).d,
         published_count: one(
-          "SELECT count(*) n FROM list_runs WHERE list_id=? AND status='published'",
+          "SELECT count(*) n FROM list_runs WHERE list_id=? AND deleted_at IS NULL AND status='published'",
           l.id,
         ).n,
         assignees:
@@ -676,8 +700,9 @@ app.get("/api/lists", (req, res) => {
   if (req.session.role === "admin")
     result.sort(
       (a, b) =>
-        ({ review: 0, active: 1, published: 2 })[a.status] -
-          { review: 0, active: 1, published: 2 }[b.status] || b.id - a.id,
+        ({ review: 0, active: 1, published: 2, deleted: 3 })[a.status] -
+          { review: 0, active: 1, published: 2, deleted: 3 }[b.status] ||
+        b.id - a.id,
     );
   res.json(result);
 });
@@ -685,10 +710,11 @@ app.get("/api/lists/:id/points", (req, res) => {
   const id = Number(req.params.id),
     r = visibleRun(req.session, id, req.query.run ?? null);
   if (!r) return fail(res, 403, "Diese Liste ist nicht für dich freigegeben.");
+  if (r.deleted_at) return res.json([]);
   const points =
     r.status === "published"
       ? all(
-          "SELECT point_id id,? list_id,code,address,target FROM run_points WHERE run_id=? ORDER BY code",
+          "SELECT point_id id,? list_id,code,address,target FROM run_points rp WHERE run_id=? AND EXISTS(SELECT 1 FROM flushes f WHERE f.run_id=rp.run_id AND f.point_id=rp.point_id AND f.deleted_at IS NULL) ORDER BY code",
           id,
           r.id,
         )
@@ -700,22 +726,24 @@ app.get("/api/lists/:id/points", (req, res) => {
     points.map((p) => ({
       ...p,
       completed: !!one(
-        "SELECT 1 FROM flushes WHERE run_id=? AND point_id=?",
+        "SELECT 1 FROM flushes WHERE deleted_at IS NULL AND run_id=? AND point_id=?",
         r.id,
         p.id,
       ),
       last_flush:
         r.status === "published"
           ? one(
-              "SELECT max(flushed_at) d FROM flushes WHERE point_id=? AND run_id=?",
+              "SELECT max(flushed_at) d FROM flushes WHERE deleted_at IS NULL AND point_id=? AND run_id=?",
               p.id,
               r.id,
             ).d
-          : one("SELECT max(flushed_at) d FROM flushes WHERE point_id=?", p.id)
-              .d,
+          : one(
+              "SELECT max(flushed_at) d FROM flushes WHERE deleted_at IS NULL AND point_id=?",
+              p.id,
+            ).d,
       last_volume:
         one(
-          "SELECT volume FROM flushes WHERE run_id=? AND point_id=? ORDER BY id DESC LIMIT 1",
+          "SELECT volume FROM flushes WHERE deleted_at IS NULL AND run_id=? AND point_id=? ORDER BY id DESC LIMIT 1",
           r.id,
           p.id,
         )?.volume ?? null,
@@ -734,15 +762,118 @@ app.get("/api/lists/:id/runs", (req, res) => {
         : "";
   res.json(
     all(
-      "SELECT id,number,status,created_at,completed_at,published_at FROM list_runs WHERE list_id=?" +
+      "SELECT id,number,status,created_at,completed_at,published_at FROM list_runs WHERE deleted_at IS NULL AND list_id=?" +
         filter +
         " ORDER BY number DESC",
       id,
     ),
   );
 });
+app.get("/api/report-runs", (req, res) => {
+  const scope =
+    req.session.role === "viewer"
+      ? "AND r.status='published'"
+      : req.session.role === "employee"
+        ? "AND r.status='active' AND EXISTS(SELECT 1 FROM assignments a WHERE a.list_id=r.list_id AND a.user_id=?)"
+        : "";
+  res.json(
+    all(
+      `SELECT r.id,r.list_id listId,r.name_snapshot name,r.number,r.status,r.published_at publishedAt,count(f.id) measurement_count FROM list_runs r JOIN lists l ON l.id=r.list_id LEFT JOIN flushes f ON f.run_id=r.id AND f.deleted_at IS NULL WHERE r.deleted_at IS NULL AND l.deleted_at IS NULL ${scope} GROUP BY r.id HAVING count(f.id)>0 OR r.status IN ('review','published') ORDER BY coalesce(r.published_at,r.created_at) DESC,r.id DESC`,
+      ...(req.session.role === "employee" ? [req.session.user_id] : []),
+    ),
+  );
+});
+app.get("/api/statistics/settings", (req, res) => {
+  res.json({
+    after_id: Number(
+      one("SELECT value FROM app_settings WHERE key='statistics_after_id'")
+        ?.value || 0,
+    ),
+    reset_at:
+      one("SELECT value FROM app_settings WHERE key='statistics_reset_at'")
+        ?.value || null,
+  });
+});
+app.post("/api/statistics/reset", admin, (req, res) => {
+  if (req.body.confirm !== "STATISTIK ZURÜCKSETZEN")
+    return fail(
+      res,
+      400,
+      "Bitte bestätige das Zurücksetzen mit STATISTIK ZURÜCKSETZEN.",
+    );
+  const at = new Date().toISOString();
+  transaction(() => {
+    for (const [key, value] of [
+      [
+        "statistics_after_id",
+        String(one("SELECT coalesce(max(id),0) id FROM flushes").id),
+      ],
+      ["statistics_reset_at", at],
+      ["statistics_reset_by", String(req.session.user_id)],
+    ])
+      run(
+        "INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        key,
+        value,
+      );
+  });
+  res.json({ ok: true, reset_at: at });
+});
+app.delete("/api/flushes/:id", admin, (req, res) => {
+  const f = one(
+    "SELECT f.*,r.status,r.list_id FROM flushes f JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE f.id=? AND f.deleted_at IS NULL AND r.deleted_at IS NULL AND l.deleted_at IS NULL",
+    Number(req.params.id),
+  );
+  if (!f) return fail(res, 404, "Protokoll nicht gefunden.");
+  if (req.body.confirm_code !== f.code_snapshot)
+    return fail(res, 400, "Bitte bestätige die Spülpunkt-ID.");
+  run(
+    "UPDATE flushes SET deleted_at=?,deleted_by=? WHERE id=?",
+    new Date().toISOString(),
+    req.session.user_id,
+    f.id,
+  );
+  res.json({ ok: true });
+});
+app.delete("/api/runs/:id", admin, (req, res) => {
+  const r = one(
+    "SELECT r.* FROM list_runs r JOIN lists l ON l.id=r.list_id WHERE r.id=? AND r.deleted_at IS NULL AND l.deleted_at IS NULL",
+    Number(req.params.id),
+  );
+  if (!r) return fail(res, 404, "Durchlauf nicht gefunden.");
+  if (r.status === "active")
+    return fail(
+      res,
+      409,
+      "Nur abgeschlossene Durchläufe können gelöscht werden.",
+    );
+  if (req.body.confirm_name !== r.name_snapshot)
+    return fail(res, 400, "Bitte bestätige den Listennamen.");
+  transaction(() => {
+    const at = new Date().toISOString();
+    run(
+      "UPDATE list_runs SET deleted_at=?,deleted_by=? WHERE id=?",
+      at,
+      req.session.user_id,
+      r.id,
+    );
+    run(
+      "UPDATE flushes SET deleted_at=coalesce(deleted_at,?),deleted_by=coalesce(deleted_by,?) WHERE run_id=?",
+      at,
+      req.session.user_id,
+      r.id,
+    );
+    if (currentRun(r.list_id).id === r.id)
+      run("DELETE FROM assignments WHERE list_id=?", r.list_id);
+  });
+  res.json({ ok: true });
+});
 app.get("/api/flushes", (req, res) => {
-  const filters = ["l.deleted_at IS NULL"],
+  const filters = [
+      "l.deleted_at IS NULL",
+      "r.deleted_at IS NULL",
+      "f.deleted_at IS NULL",
+    ],
     args = [];
   if (req.session.role === "viewer") filters.push("r.status='published'");
   if (req.session.role === "employee") {
@@ -780,7 +911,7 @@ const internalRole = (req, res, next) =>
       );
 const noteVisible = (session, id) =>
   !!one(
-    `SELECT n.id FROM internal_notes n JOIN flushes f ON f.id=n.flush_id JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE n.id=? AND l.deleted_at IS NULL ${session.role === "admin" ? "" : "AND (f.user_id=? OR EXISTS(SELECT 1 FROM assignments a WHERE a.list_id=r.list_id AND a.user_id=?))"}`,
+    `SELECT n.id FROM internal_notes n JOIN flushes f ON f.id=n.flush_id JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE n.id=? AND f.deleted_at IS NULL AND r.deleted_at IS NULL AND l.deleted_at IS NULL ${session.role === "admin" ? "" : "AND (f.user_id=? OR EXISTS(SELECT 1 FROM assignments a WHERE a.list_id=r.list_id AND a.user_id=?))"}`,
     id,
     ...(session.role === "admin" ? [] : [session.user_id, session.user_id]),
   );
@@ -791,7 +922,7 @@ app.get("/api/internal-notes", internalRole, (req, res) => {
       : " AND (f.user_id=? OR EXISTS(SELECT 1 FROM assignments a WHERE a.list_id=r.list_id AND a.user_id=?))";
   res.json(
     all(
-      `SELECT n.id,n.content,n.acknowledged_at,f.point_id,f.code_snapshot code,f.address_snapshot address,f.employee_snapshot employee,f.flushed_at,r.list_id,r.number run_number,r.name_snapshot list_name FROM internal_notes n JOIN flushes f ON f.id=n.flush_id JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE l.deleted_at IS NULL AND n.acknowledged_at IS NULL${scope} ORDER BY f.flushed_at DESC,n.id DESC`,
+      `SELECT n.id,n.content,n.acknowledged_at,f.point_id,f.code_snapshot code,f.address_snapshot address,f.employee_snapshot employee,f.flushed_at,r.list_id,r.number run_number,r.name_snapshot list_name FROM internal_notes n JOIN flushes f ON f.id=n.flush_id JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE f.deleted_at IS NULL AND r.deleted_at IS NULL AND l.deleted_at IS NULL AND n.acknowledged_at IS NULL${scope} ORDER BY f.flushed_at DESC,n.id DESC`,
       ...(req.session.role === "admin"
         ? []
         : [req.session.user_id, req.session.user_id]),
@@ -826,7 +957,7 @@ app.post("/api/internal-notes/acknowledge", internalRole, (req, res) => {
 });
 const measurementReceipt = (id) => {
   const record = one(
-    "SELECT id,request_id,point_id,run_id,user_id,source,code_snapshot code,target_snapshot target,volume,temperature_before,temperature_after FROM flushes WHERE id=?",
+    "SELECT id,request_id,point_id,run_id,user_id,source,code_snapshot code,target_snapshot target,volume,temperature_before,temperature_after FROM flushes WHERE deleted_at IS NULL AND id=? AND run_id IN(SELECT id FROM list_runs WHERE deleted_at IS NULL)",
     id,
   );
   return record ? { ...record, saved: true } : null;
@@ -844,7 +975,7 @@ app.get("/api/flushes/:id/receipt", (req, res) => {
 });
 app.get("/api/measurement-receipts/:requestId", (req, res) => {
   const record = one(
-    "SELECT id FROM flushes WHERE request_id=? AND user_id=? AND source='esp32'",
+    "SELECT id FROM flushes WHERE deleted_at IS NULL AND run_id IN(SELECT id FROM list_runs WHERE deleted_at IS NULL) AND request_id=? AND user_id=? AND source='esp32'",
     req.params.requestId,
     req.session.user_id,
   );
@@ -885,6 +1016,16 @@ app.post("/api/points/:id/flushes", (req, res) => {
       b.request_id,
     );
     if (cached) {
+      if (
+        cached.deleted_at ||
+        one("SELECT deleted_at FROM list_runs WHERE id=?", cached.run_id)
+          ?.deleted_at
+      )
+        return fail(
+          res,
+          409,
+          "Dieses Protokoll wurde von der Administration gelöscht. Starte für eine neue Messung einen neuen Auftrag.",
+        );
       if (
         cached.user_id !== req.session.user_id ||
         cached.point_id !== Number(req.params.id) ||
@@ -957,7 +1098,13 @@ app.post("/api/points/:id/flushes", (req, res) => {
       400,
       "Temperaturen: 0–100 °C; Menge: größer 0 bis 1.000.000 m³; Trübung: Ja oder Nein.",
     );
-  if (one("SELECT 1 FROM flushes WHERE run_id=? AND point_id=?", r.id, p.id))
+  if (
+    one(
+      "SELECT 1 FROM flushes WHERE deleted_at IS NULL AND run_id=? AND point_id=?",
+      r.id,
+      p.id,
+    )
+  )
     return fail(
       res,
       409,
@@ -1004,7 +1151,7 @@ app.post("/api/lists/:id/publish", admin, (req, res) => {
     l = one("SELECT * FROM lists WHERE id=? AND deleted_at IS NULL", id),
     r = currentRun(id);
   if (!l) return fail(res, 404, "Liste nicht gefunden.");
-  if (r?.status !== "review")
+  if (r?.status !== "review" || r.deleted_at)
     return fail(
       res,
       409,
@@ -1043,7 +1190,7 @@ app.post("/api/lists/:id/restart", admin, (req, res) => {
     ids = req.body.user_ids;
   if (!one("SELECT 1 FROM lists WHERE id=? AND deleted_at IS NULL", id))
     return fail(res, 404, "Liste nicht gefunden.");
-  if (r?.status !== "published")
+  if (!r || (r.status !== "published" && !r.deleted_at))
     return fail(
       res,
       409,
@@ -1202,7 +1349,7 @@ app.put("/api/points/:id", admin, (req, res) => {
     );
   if (
     one(
-      "SELECT 1 FROM flushes WHERE point_id=? AND run_id=?",
+      "SELECT 1 FROM flushes WHERE deleted_at IS NULL AND point_id=? AND run_id=?",
       id,
       originalRun.id,
     )

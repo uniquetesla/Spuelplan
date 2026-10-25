@@ -412,6 +412,93 @@ try {
   const flow = await page.locator(".device-flow").textContent();
   assert.match(flow, /mindestens 1 m³\/h/);
   assert.match(flow, /5 Sekunden/);
+  await page.getByRole("link", { name: "Team & Zugänge", exact: true }).click();
+  await click("Einstellungen");
+  await expect(
+    page.getByRole("heading", {
+      name: "Administration · Einstellungen",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await click("Abbrechen");
+  await closed();
+  await click("Einstellungen");
+  await page
+    .getByLabel("Zur Bestätigung STATISTIK ZURÜCKSETZEN eingeben", {
+      exact: true,
+    })
+    .fill("STATISTIK ZURÜCKSETZEN");
+  await click("Statistik zurücksetzen");
+  await closed();
+  await page.goto(base + "/#/overview");
+  await expect(
+    page
+      .locator(".stat")
+      .filter({ hasText: "Gespülte Menge" })
+      .locator(".stat-number"),
+  ).toHaveText("0m³");
+  await expect(
+    page
+      .locator(".stat")
+      .filter({ hasText: "Dokumentierte Spülungen" })
+      .locator(".stat-number"),
+  ).toHaveText("0");
+  await page.goto(base + "/#/reports");
+  await expect(
+    page.locator(".list-card").filter({ hasText: "UI-Testgebiet" }),
+  ).toHaveCount(2);
+  await page
+    .locator(".list-card")
+    .filter({ hasText: "UI-Testgebiet" })
+    .first()
+    .click();
+  await expect(page.locator("tbody tr")).toHaveCount(2);
+  await page
+    .locator("tbody tr")
+    .filter({ hasText: "UI-001" })
+    .getByRole("button", { name: "Protokoll löschen", exact: true })
+    .click();
+  await click("Abbrechen");
+  await closed();
+  await expect(page.locator("tbody tr")).toHaveCount(2);
+  await page
+    .locator("tbody tr")
+    .filter({ hasText: "UI-001" })
+    .getByRole("button", { name: "Protokoll löschen", exact: true })
+    .click();
+  await page
+    .getByLabel("Zur Bestätigung die Spülpunkt-ID eingeben", { exact: true })
+    .fill("UI-001");
+  await page
+    .locator("dialog")
+    .getByRole("button", { name: "Protokoll löschen", exact: true })
+    .click();
+  await closed();
+  await expect(page.locator("tbody tr")).toHaveCount(1);
+  await page.emulateMedia({ media: "print" });
+  await expect(
+    page.getByRole("button", { name: "Protokoll löschen", exact: true }),
+  ).not.toBeVisible();
+  await page.emulateMedia({ media: "screen" });
+  await click("Durchlauf löschen");
+  await click("Abbrechen");
+  await closed();
+  await expect(page.locator("tbody tr")).toHaveCount(1);
+  await click("Durchlauf löschen");
+  await page
+    .getByLabel("Zur Bestätigung den Listennamen eingeben", { exact: true })
+    .fill("UI-Testgebiet");
+  await page
+    .locator("dialog")
+    .getByRole("button", { name: "Durchlauf löschen", exact: true })
+    .click();
+  await closed();
+  await expect(
+    page.locator(".list-card").filter({ hasText: "UI-Testgebiet" }),
+  ).toHaveCount(1);
+  console.log(
+    "PASS: Bestätigter Statistikreset erhält Protokolle; Abbrechen erhält Messungen und Durchläufe; bestätigtes Löschen entfernt nur ausgewählte Daten.",
+  );
   await openList();
   await page.screenshot({ path: "/tmp/spuelpilot-list.png", fullPage: true });
   await click("Löschen");
