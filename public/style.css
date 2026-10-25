@@ -1858,3 +1858,12 @@ input[readonly] {
 .ble-abandon {
   margin-right: 14px;
 }
+
+.ble-cancel {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #e1eaf0;
+}
+.ble-cancel .checkbox-row {
+  background: white;
+}

@@ -112,3 +112,7 @@ Einmalpasswörter sind bewusst einfach, deshalb **10 Minuten gültig**, nur für
 Das eigene Administrationspasswort wird unter **Mein Passwort** geändert. Bestehende Benutzerpasswörter können nicht mehr über das allgemeine Bearbeitungsformular gesetzt werden. Neue Benutzer behalten den bisherigen Anlageablauf mit einem mindestens zwölf Zeichen langen Anfangspasswort; bei Bedarf kann danach ein Einmalpasswort erzeugt werden. Bestandskonten bleiben bei der ergänzenden Datenbankmigration unverändert.
 
 Betrachter sehen **Geräte & Sensoren** nicht; auch der direkte Aufruf dieses Bereichs führt zurück zur Übersicht. Die ESP32-Anbindung folgt dem bestätigten Sende- und Empfangsformat; siehe BLE-Vertrag.
+
+### Messung abbrechen
+
+Im laufenden BLE-Auftrag steht **Messung abbrechen** zur Verfügung. Es wird das vorhandene Auftragsformat mit der Sondermenge null verwendet, etwa `SP-1024;0`; kein neuer Befehl wird eingeführt. Dazu muss die ESP32-Firmware die [Abbrucherweiterung](docs/esp32-ble.md#messung-abbrechen-ohne-neuen-befehlsnamen) unterstützen und dies pro Verbindung in der Oberfläche bestätigt werden. Ein fertiges, ungespeichertes Ergebnis bleibt geschützt. Der Abbruch erzeugt keinen Spülnachweis und schließt kein Ventil. Er gilt erst nach Gerätebestätigung als erfolgreich; unklare Abbrüche bleiben wiederaufnehmbar.
