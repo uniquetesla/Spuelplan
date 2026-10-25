@@ -2,6 +2,7 @@ import express from "express";
 import { DatabaseSync, backup } from "node:sqlite";
 import {
   randomBytes,
+  randomInt,
   scryptSync,
   timingSafeEqual,
   createHash,
@@ -77,6 +78,19 @@ CREATE TABLE IF NOT EXISTS run_points(run_id INTEGER NOT NULL REFERENCES list_ru
 CREATE INDEX IF NOT EXISTS list_runs_list_idx ON list_runs(list_id,number DESC);
 CREATE INDEX IF NOT EXISTS flushes_run_point_idx ON flushes(run_id,point_id);
 `);
+for (const [name, definition] of [
+  ["must_change_password", "INTEGER NOT NULL DEFAULT 0"],
+  ["temporary_expires", "INTEGER"],
+  ["temporary_used", "INTEGER NOT NULL DEFAULT 0"],
+]) {
+  if (
+    !db
+      .prepare("PRAGMA table_info(users)")
+      .all()
+      .some((c) => c.name === name)
+  )
+    db.exec(`ALTER TABLE users ADD COLUMN ${name} ${definition}`);
+}
 const setupTokenPath = resolve(dirname(dbPath), "setup-token");
 if (!oneUserExists() && !existsSync(setupTokenPath))
   writeFileSync(setupTokenPath, randomBytes(32).toString("hex"), {
@@ -130,7 +144,7 @@ app.use("/api", (req, res, next) => {
     ?.slice(11);
   if (cookie) {
     const session = one(
-      "SELECT s.*,u.name,u.email,u.role FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1",
+      "SELECT s.*,u.name,u.email,u.role,u.must_change_password FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1",
       digest(cookie),
       Date.now(),
     );
@@ -160,7 +174,132 @@ const publicUser = (s) => ({
   name: s.name,
   email: s.email,
   role: s.role,
+  must_change_password: !!s.must_change_password,
 });
+const openSession = (res, u) => {
+  const token = randomBytes(32).toString("hex"),
+    csrf = randomBytes(24).toString("hex");
+  const lifetime = u.must_change_password ? 10 * 60000 : 8 * 3600000;
+  run("DELETE FROM sessions WHERE expires<?", Date.now());
+  run(
+    "INSERT INTO sessions VALUES(?,?,?,?)",
+    digest(token),
+    u.id,
+    csrf,
+    Date.now() + lifetime,
+  );
+  res.cookie("sp_session", token, {
+    httpOnly: true,
+    secure: process.env.COOKIE_SECURE === "true",
+    sameSite: "strict",
+    maxAge: lifetime,
+    path: "/",
+  });
+  return { user: publicUser({ ...u, user_id: u.id }), csrf };
+};
+const temporaryWords = [
+  "Giraffe",
+  "Elefant",
+  "Zebra",
+  "Pinguin",
+  "Delfin",
+  "Adler",
+  "Biber",
+  "Fuchs",
+  "Igel",
+  "Tiger",
+  "Panda",
+  "Koala",
+  "Otter",
+  "Dachs",
+  "Loewe",
+  "Eule",
+  "Ente",
+  "Hase",
+  "Wolf",
+  "Falke",
+  "Kamel",
+  "Kranich",
+  "Reh",
+  "Schwan",
+  "Specht",
+  "Robbe",
+  "Wal",
+  "Gecko",
+  "Amsel",
+  "Marder",
+  "Wombat",
+  "Luchs",
+  "Tisch",
+  "Stuhl",
+  "Lampe",
+  "Tasse",
+  "Becher",
+  "Kanne",
+  "Loeffel",
+  "Gabel",
+  "Teller",
+  "Besen",
+  "Eimer",
+  "Korb",
+  "Koffer",
+  "Schrank",
+  "Teppich",
+  "Hammer",
+  "Zange",
+  "Schaufel",
+  "Leiter",
+  "Buch",
+  "Heft",
+  "Stift",
+  "Uhr",
+  "Radio",
+  "Telefon",
+  "Fahrrad",
+  "Auto",
+  "Boot",
+  "Ball",
+  "Kerze",
+  "Spiegel",
+  "Kissen",
+];
+const temporaryNumbers = [
+  "1234",
+  "0815",
+  "1111",
+  "2222",
+  "3333",
+  "4444",
+  "5555",
+  "6666",
+  "7777",
+  "8888",
+  "9999",
+  "0000",
+  "4321",
+  "2468",
+  "1357",
+  "1212",
+  "2026",
+  "9090",
+  "1010",
+  "5050",
+];
+const generateTemporaryPassword = () =>
+  temporaryWords[randomInt(temporaryWords.length)] +
+  temporaryNumbers[randomInt(temporaryNumbers.length)];
+const passwordChangeBlocked = (key) => {
+  const a = one("SELECT * FROM login_attempts WHERE key=?", key);
+  return a && a.expires > Date.now() && a.count >= 8;
+};
+const countPasswordFailure = (key) =>
+  run(
+    "INSERT INTO login_attempts(key,count,expires) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN expires<? THEN 1 ELSE count+1 END,expires=CASE WHEN expires<? THEN excluded.expires ELSE expires END",
+    key,
+    Date.now() + 900000,
+    Date.now(),
+    Date.now(),
+  );
 const currentRun = (id) =>
   one(
     "SELECT * FROM list_runs WHERE list_id=? ORDER BY number DESC LIMIT 1",
@@ -296,10 +435,10 @@ app.post("/api/login", (req, res) => {
     password.length > 128
   )
     return fail(res, 400, "E-Mail und Passwort erforderlich.");
-  const key = digest(`${req.socket.remoteAddress}:${email.toLowerCase()}`);
   const ipKey = digest(`ip:${req.socket.remoteAddress}`);
+  const accountKey = digest(`login-account:${email.trim().toLowerCase()}`);
   for (const [k, limit] of [
-    [key, 8],
+    [accountKey, 8],
     [ipKey, 50],
   ]) {
     const a = one("SELECT * FROM login_attempts WHERE key=?", k);
@@ -316,8 +455,15 @@ app.post("/api/login", (req, res) => {
   );
   const dummy = "00000000000000000000000000000000:" + "00".repeat(64);
   const matches = verify(password, u?.password || dummy);
-  if (!u || !matches) {
-    for (const k of [key, ipKey])
+  if (
+    !u ||
+    !matches ||
+    (u.must_change_password &&
+      (u.temporary_used ||
+        !u.temporary_expires ||
+        u.temporary_expires <= Date.now()))
+  ) {
+    for (const k of [ipKey, accountKey])
       run(
         "INSERT INTO login_attempts(key,count,expires) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN expires<? THEN 1 ELSE count+1 END,expires=CASE WHEN expires<? THEN excluded.expires ELSE expires END",
         k,
@@ -327,28 +473,21 @@ app.post("/api/login", (req, res) => {
       );
     return fail(res, 401, "E-Mail oder Passwort ist falsch.");
   }
-  run("DELETE FROM login_attempts WHERE key=?", key);
-  const token = randomBytes(32).toString("hex"),
-    csrf = randomBytes(24).toString("hex");
-  run("DELETE FROM sessions WHERE expires<?", Date.now());
-  run(
-    "INSERT INTO sessions VALUES(?,?,?,?)",
-    digest(token),
-    u.id,
-    csrf,
-    Date.now() + 8 * 3600000,
-  );
-  res.cookie("sp_session", token, {
-    httpOnly: true,
-    secure: process.env.COOKIE_SECURE === "true",
-    sameSite: "strict",
-    maxAge: 8 * 3600000,
-    path: "/",
+  const auth = transaction(() => {
+    if (u.must_change_password) {
+      const consumed = run(
+        "UPDATE users SET temporary_used=1 WHERE id=? AND temporary_used=0 AND must_change_password=1 AND temporary_expires>?",
+        u.id,
+        Date.now(),
+      );
+      if (consumed.changes !== 1) return null;
+    }
+    for (const k of [accountKey])
+      run("DELETE FROM login_attempts WHERE key=?", k);
+    return openSession(res, u);
   });
-  res.json({
-    user: { id: u.id, name: u.name, email: u.email, role: u.role },
-    csrf,
-  });
+  if (!auth) return fail(res, 401, "E-Mail oder Passwort ist falsch.");
+  res.json(auth);
 });
 app.use("/api", requireAuth);
 app.get("/api/me", (req, res) =>
@@ -358,6 +497,95 @@ app.post("/api/logout", (req, res) => {
   run("DELETE FROM sessions WHERE token=?", req.session.token);
   res.clearCookie("sp_session", { path: "/" });
   res.json({ ok: true });
+});
+app.post("/api/account/password", (req, res) => {
+  const u = one(
+      "SELECT * FROM users WHERE id=? AND active=1",
+      req.session.user_id,
+    ),
+    b = req.body;
+  if (!validPassword(b.new_password))
+    return fail(res, 400, "Das neue Passwort muss 12–128 Zeichen lang sein.");
+  if (b.new_password !== b.confirm_password)
+    return fail(res, 400, "Die neuen Passwörter stimmen nicht überein.");
+  const key = digest(`password-change:${u.id}`);
+  if (passwordChangeBlocked(key))
+    return fail(
+      res,
+      429,
+      "Zu viele Versuche. Bitte in 15 Minuten erneut versuchen.",
+    );
+  if (
+    !u.must_change_password &&
+    (typeof b.current_password !== "string" ||
+      b.current_password.length > 128 ||
+      !verify(b.current_password, u.password))
+  ) {
+    countPasswordFailure(key);
+    return fail(res, 400, "Das aktuelle Passwort ist falsch.");
+  }
+  if (verify(b.new_password, u.password))
+    return fail(
+      res,
+      400,
+      "Wähle ein anderes Passwort als dein bisheriges Passwort.",
+    );
+  const auth = transaction(() => {
+    run(
+      "UPDATE users SET password=?,must_change_password=0,temporary_expires=NULL,temporary_used=0 WHERE id=?",
+      hash(b.new_password),
+      u.id,
+    );
+    run("DELETE FROM sessions WHERE user_id=?", u.id);
+    run("DELETE FROM login_attempts WHERE key=?", key);
+    return openSession(res, { ...u, must_change_password: 0 });
+  });
+  res.json(auth);
+});
+// A one-time-password login only authorizes password replacement and logout.
+app.use("/api", (req, res, next) => {
+  if (req.session.must_change_password)
+    return res.status(403).json({
+      error: "Bitte vergib zuerst ein neues persönliches Passwort.",
+      code: "PASSWORD_CHANGE_REQUIRED",
+    });
+  next();
+});
+app.post("/api/users/:id/reset-password", admin, (req, res) => {
+  const id = Number(req.params.id),
+    u = one("SELECT * FROM users WHERE id=?", id);
+  if (!u) return fail(res, 404, "Benutzer nicht gefunden.");
+  if (id === req.session.user_id)
+    return fail(res, 400, "Ändere dein eigenes Passwort unter Mein Passwort.");
+  if (!u.active) return fail(res, 409, "Aktiviere das Benutzerkonto zuerst.");
+  let temporaryPassword;
+  do {
+    temporaryPassword = generateTemporaryPassword();
+  } while (verify(temporaryPassword, u.password));
+  const expires = Date.now() + 10 * 60000;
+  transaction(() => {
+    run(
+      "UPDATE users SET password=?,must_change_password=1,temporary_expires=?,temporary_used=0 WHERE id=?",
+      hash(temporaryPassword),
+      expires,
+      id,
+    );
+    run("DELETE FROM sessions WHERE user_id=?", id);
+    // A newly issued credential must be usable even after earlier failed logins.
+    run(
+      "DELETE FROM login_attempts WHERE key=?",
+      digest(`login-account:${u.email}`),
+    );
+    run(
+      "DELETE FROM login_attempts WHERE key=?",
+      digest(`password-change:${id}`),
+    );
+    run(
+      "DELETE FROM login_attempts WHERE key=?",
+      digest(`${req.socket.remoteAddress}:${u.email}`),
+    );
+  });
+  res.json({ temporary_password: temporaryPassword, expires_in_minutes: 10 });
 });
 app.get("/api/lists", (req, res) => {
   const result = [];
@@ -791,7 +1019,11 @@ app.put("/api/points/:id", admin, (req, res) => {
   res.json({ ok: true });
 });
 app.get("/api/users", admin, (req, res) =>
-  res.json(all("SELECT id,name,email,role,active FROM users ORDER BY name")),
+  res.json(
+    all(
+      "SELECT id,name,email,role,active,must_change_password FROM users ORDER BY name",
+    ),
+  ),
 );
 app.post("/api/users", admin, (req, res) => {
   const b = req.body;
@@ -819,6 +1051,12 @@ app.put("/api/users/:id", admin, (req, res) => {
     (b.password && !validPassword(b.password))
   )
     return fail(res, 400, "Bitte gültige Benutzerdaten eingeben.");
+  if (b.password)
+    return fail(
+      res,
+      400,
+      "Verwende Einmalpasswort erstellen, um ein Benutzerpasswort zurückzusetzen.",
+    );
   const existing = one("SELECT * FROM users WHERE id=?", id);
   if (!existing) return fail(res, 404, "Benutzer nicht gefunden.");
   if (req.session.user_id === id && (!b.active || b.role !== "admin"))
@@ -836,8 +1074,6 @@ app.put("/api/users/:id", admin, (req, res) => {
       b.active ? 1 : 0,
       id,
     );
-    if (b.password)
-      run("UPDATE users SET password=? WHERE id=?", hash(b.password), id);
     if (b.role === "viewer" || !b.active)
       run("DELETE FROM assignments WHERE user_id=?", id);
     if (b.password || !b.active || existing.role !== b.role)

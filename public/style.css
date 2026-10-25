@@ -1725,3 +1725,54 @@ textarea::placeholder {
     gap: 10px;
   }
 }
+
+.account-panel {
+  max-width: 560px;
+}
+.account-body {
+  padding: 24px;
+}
+.required-password {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 30px 20px;
+  background: linear-gradient(140deg, #edf8fc, #f6f8fa);
+}
+.required-card {
+  width: 100%;
+  max-width: 490px;
+  padding: 34px;
+  background: white;
+  border: 1px solid #dfebf1;
+  border-radius: 16px;
+  box-shadow: 0 15px 60px #173e5010;
+}
+.required-card .brand {
+  margin-bottom: 32px;
+}
+.required-card h1 {
+  font-size: 25px;
+}
+.required-card .subtitle {
+  margin: 12px 0 24px;
+}
+.one-time-password {
+  margin: 12px 0 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 24px;
+  text-align: center;
+  color: #087fbd;
+  background: #f0f9fd;
+}
+.password-form .button {
+  margin-right: 6px;
+}
+@media (max-width: 620px) {
+  .required-card {
+    padding: 24px;
+  }
+  .required-card h1 {
+    font-size: 22px;
+  }
+}
