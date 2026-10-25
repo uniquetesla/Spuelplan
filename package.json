@@ -1,5 +1,5 @@
 {
-  "name": "spuelplan",
+  "name": "spuelpilot",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "test:ui": "node e2e/smoke.mjs"
   },
   "engines": {
-    "node": ">=22.13"
+    "node": ">=24"
   },
   "dependencies": {
     "express": "^5.1.0"

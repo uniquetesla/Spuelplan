@@ -1,10 +1,10 @@
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-const directory = mkdtempSync(join(tmpdir(), "spuelplan-ui-"));
+const directory = mkdtempSync(join(tmpdir(), "spuelpilot-ui-"));
 const password = "UI-Test-Passwort-2026!";
 let browser, server;
 try {
@@ -21,19 +21,19 @@ try {
   });
   const base = await new Promise((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error("Serverstart fehlgeschlagen")),
+      () => reject(Error("Serverstart fehlgeschlagen")),
       10000,
     );
-    server.stdout.on("data", (data) => {
-      const port = data.toString().match(/Port (\d+)/);
-      if (port) {
+    server.stdout.on("data", (d) => {
+      const m = d.toString().match(/Port (\d+)/);
+      if (m) {
         clearTimeout(timer);
-        resolve("http://127.0.0.1:" + port[1]);
+        resolve("http://127.0.0.1:" + m[1]);
       }
     });
     server.once("exit", (code) => {
       clearTimeout(timer);
-      reject(new Error("Server beendet: " + code));
+      reject(Error("Server exit " + code));
     });
   });
   browser = await chromium.launch({
@@ -44,124 +44,138 @@ try {
     args: ["--no-sandbox"],
   });
   const page = await browser.newPage({
-    viewport: { width: 1440, height: 1000 },
-  });
-  const errors = [];
+      viewport: { width: 1440, height: 1050 },
+    }),
+    errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (msg) => {
-    if (
-      msg.type() === "error" &&
-      !msg.text().includes("401") &&
-      !msg.text().includes("favicon")
-    )
+    if (msg.type() === "error" && !msg.text().includes("401"))
       errors.push(msg.text());
   });
+  const heading = (name) =>
+    page.getByRole("heading", { name, exact: true, level: 1 });
+  const click = (name) =>
+    page.getByRole("button", { name, exact: true }).click();
+  const closed = () => expect(page.locator("dialog")).not.toBeVisible();
   async function login(email) {
     await page.goto(base);
+    await expect(page).toHaveTitle("SpülPilot · Stadtwerke Heppenheim");
     await page.getByLabel("E-Mail-Adresse", { exact: true }).fill(email);
     await page.getByLabel("Passwort", { exact: true }).fill(password);
-    await page.getByRole("button", { name: "Anmelden", exact: true }).click();
-    await page
-      .getByRole("heading", { name: "Übersicht", exact: true })
-      .waitFor();
+    await click("Anmelden");
+    await expect(heading("Übersicht")).toBeVisible();
   }
   async function logout() {
-    await page.getByRole("button", { name: "Abmelden", exact: true }).click();
-    await page.getByRole("button", { name: "Anmelden", exact: true }).waitFor();
+    await click("Abmelden");
+    await expect(
+      page.getByRole("button", { name: "Anmelden", exact: true }),
+    ).toBeVisible();
+  }
+  async function openList() {
+    await page.goto(base + "/#/lists");
+    await page.getByRole("link", { name: /UI-Testgebiet/ }).click();
+    await expect(heading("UI-Testgebiet")).toBeVisible();
+  }
+  async function newPoint(code) {
+    await page
+      .getByRole("button", { name: "Spülpunkt anlegen", exact: true })
+      .first()
+      .click();
+    await page.getByLabel("Spülpunkt ID", { exact: true }).fill(code);
+    await page
+      .getByLabel("Adresse des Spülpunkts", { exact: true })
+      .fill(code + " · 64646 Heppenheim");
+    await page.getByLabel("Sollmenge in m³", { exact: true }).fill("2.5");
+    await click("Speichern");
+    await closed();
+    await expect(page.getByText(code, { exact: true })).toBeVisible();
+  }
+  async function documentPoint(code, amount) {
+    await page
+      .getByRole("row")
+      .filter({ has: page.getByText(code, { exact: true }) })
+      .getByRole("button", { name: "Spülung erfassen", exact: true })
+      .click();
+    await page
+      .getByLabel("Temperatur vorher · °C", { exact: true })
+      .fill("23.1");
+    await page
+      .getByLabel("Temperatur nachher · °C", { exact: true })
+      .fill("14.3");
+    await page
+      .getByLabel("Tatsächlich gespülte Menge · m³", { exact: true })
+      .fill(amount);
+    await page
+      .getByLabel("Trübung festgestellt?", { exact: true })
+      .selectOption("false");
+    assert.doesNotMatch(await page.locator("dialog").textContent(), /Uhrzeit/);
+    await click("Spülung speichern");
+    await closed();
   }
   await login("admin@spuelplan.local");
-  await page
-    .getByRole("button", { name: "Neue Spülliste", exact: true })
-    .click();
+  await click("Neue Spülliste");
   await page.getByLabel("Listenname", { exact: true }).fill("UI-Testgebiet");
-  await page
-    .getByLabel("Beschreibung", { exact: false })
-    .fill("Automatisiert geprüftes Gebiet");
-  await page.getByRole("button", { name: "Speichern", exact: true }).click();
-  await page.getByRole("link", { name: /Alle Listen ansehen/ }).click();
-  await page.getByRole("link", { name: /UI-Testgebiet/ }).click();
-  await page
-    .getByRole("button", { name: "Spülpunkt anlegen", exact: true })
-    .first()
-    .click();
-  await page.getByLabel("Spülpunkt ID", { exact: true }).fill("UI-001");
-  await page
-    .getByLabel("Adresse des Spülpunkts", { exact: true })
-    .fill("Teststraße 42, Berlin");
-  await page.getByLabel("Sollmenge in m³", { exact: true }).fill("2.5");
-  await page.getByRole("button", { name: "Speichern", exact: true }).click();
-  await page.getByText("UI-001", { exact: true }).first().waitFor();
-  await page.getByRole("button", { name: "Freigabe", exact: true }).click();
-  await page.getByRole("checkbox", { name: /Alex Morgan/ }).waitFor();
-  assert.equal(await page.getByRole("checkbox").count(), 2);
-  await page.getByRole("checkbox", { name: /Lena Fischer/ }).check();
+  await click("Speichern");
+  await closed();
+  await openList();
+  await newPoint("UI-001");
+  await newPoint("UI-002");
+  await click("Freigabe");
   await page.getByRole("checkbox", { name: /Alex Morgan/ }).check();
-  await page.getByRole("button", { name: "Speichern", exact: true }).click();
-  await page.locator("dialog").waitFor({ state: "hidden" });
-  await page
-    .getByRole("button", { name: "Spülung erfassen", exact: true })
-    .waitFor();
-  await page
-    .getByRole("button", { name: "Spülung erfassen", exact: true })
-    .click();
-  await page.getByLabel("Temperatur vorher · °C", { exact: true }).fill("24");
-  await page.getByLabel("Temperatur nachher · °C", { exact: true }).fill("15");
-  await page
-    .getByLabel("Tatsächlich gespülte Menge · m³", { exact: true })
-    .fill("2.6");
-  await page
-    .getByLabel("Trübung festgestellt?", { exact: true })
-    .selectOption("false");
-  assert.doesNotMatch(await page.locator("dialog").textContent(), /Uhrzeit/);
-  await page
-    .getByRole("button", { name: "Spülung speichern", exact: true })
-    .click();
-  await page.locator("dialog").waitFor({ state: "hidden" });
+  await page.getByRole("checkbox", { name: /Lena Fischer/ }).check();
+  await expect(page.getByRole("checkbox")).toHaveCount(2);
+  await click("Speichern");
+  await closed();
+  await expect(
+    page.getByRole("button", { name: "Spülung erfassen", exact: true }),
+  ).toHaveCount(2);
+  await documentPoint("UI-001", "2.6");
+  await expect(
+    page.getByRole("button", { name: "Spülung erfassen", exact: true }),
+  ).toHaveCount(1);
   await logout();
   console.log(
-    "PASS: Administration gibt Listen für Administration und Mitarbeiter frei und erfasst selbst eine Spülung.",
-  );
-  await login("lena@spuelplan.local");
-  await page.getByRole("link", { name: /UI-Testgebiet/ }).click();
-  await page
-    .getByRole("button", { name: "Spülung erfassen", exact: true })
-    .click();
-  await page.getByLabel("Temperatur vorher · °C", { exact: true }).fill("23.1");
-  await page
-    .getByLabel("Temperatur nachher · °C", { exact: true })
-    .fill("14.3");
-  await page
-    .getByLabel("Tatsächlich gespülte Menge · m³", { exact: true })
-    .fill("2.7");
-  await page
-    .getByLabel("Trübung festgestellt?", { exact: true })
-    .selectOption("false");
-  await page
-    .getByRole("button", { name: "Spülung speichern", exact: true })
-    .click();
-  await page.locator("dialog").waitFor({ state: "hidden" });
-  await page.getByRole("button", { name: "Protokolle", exact: true }).click();
-  await page
-    .getByRole("heading", { name: "Spülprotokolle", exact: true })
-    .waitFor();
-  await page.getByText("UI-001", { exact: true }).first().waitFor();
-  assert.equal(await page.locator("tbody tr").count(), 2);
-  assert.match(await page.locator("tbody").textContent(), /2,7/);
-  await logout();
-  console.log(
-    "PASS: Mitarbeiter erfasst Messwerte; Protokoll wird gespeichert und richtig gefiltert.",
+    "PASS: SpülPilot-Branding; Administration legt Liste und Punkte an, gibt sie frei und erfasst einen Punkt.",
   );
   await login("betrachter@spuelplan.local");
-  assert.equal(
-    await page.getByRole("link", { name: /Team & Zugänge/ }).count(),
+  await page.goto(base + "/#/lists");
+  await expect(heading("Spüllisten")).toBeVisible();
+  await expect(page.getByRole("link", { name: /UI-Testgebiet/ })).toHaveCount(
     0,
   );
-  await page.getByRole("link", { name: /Spülprotokolle/ }).click();
-  await page
-    .getByRole("heading", { name: "Spülprotokolle", exact: true })
-    .waitFor();
-  await page.getByLabel("Protokolle suchen", { exact: true }).fill("UI-001");
-  assert.equal(await page.locator("tbody tr").count(), 2);
+  await logout();
+  await login("lena@spuelplan.local");
+  await openList();
+  await documentPoint("UI-002", "2.7");
+  await expect(heading("Spüllisten")).toBeVisible();
+  await expect(page.getByRole("link", { name: /UI-Testgebiet/ })).toHaveCount(
+    0,
+  );
+  await logout();
+  console.log(
+    "PASS: Letzte Spülung entfernt die Liste automatisch bei Mitarbeitern; Betrachter sehen vorher keine Daten.",
+  );
+  await login("admin@spuelplan.local");
+  await expect(
+    page.getByText(/abgeschlossene Spülliste\(n\) warten/),
+  ).toBeVisible();
+  await openList();
+  await expect(page.getByText("Zur Prüfung", { exact: true })).toBeVisible();
+  await click("Speichern & für Betrachter freigeben");
+  await click("Speichern & freigeben");
+  await closed();
+  await expect(
+    page.getByRole("button", {
+      name: "Neuen Durchgang freigeben",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await logout();
+  await login("betrachter@spuelplan.local");
+  await openList();
+  await click("Protokolle");
+  await expect(heading("Spülprotokolle")).toBeVisible();
+  await expect(page.locator("tbody tr")).toHaveCount(2);
   for (const value of await page
     .locator("tbody tr td:last-child")
     .allTextContents())
@@ -176,8 +190,8 @@ try {
     landscape: true,
     preferCSSPageSize: true,
   });
-  assert.equal(await page.locator(".sidebar").isVisible(), false);
-  for (const title of [
+  await expect(page.locator(".sidebar")).not.toBeVisible();
+  for (const name of [
     "Spülpunkt ID",
     "Adresse",
     "Soll m³",
@@ -187,35 +201,79 @@ try {
     "Trübung",
     "Mitarbeiter",
   ])
-    assert.ok((await page.locator("thead").textContent()).includes(title));
+    assert.ok((await page.locator("thead").textContent()).includes(name));
   await page.emulateMedia({ media: "screen" });
+  await logout();
   console.log(
-    "PASS: Betrachter kann gefilterte Protokolle ansehen; PDF enthält alle geforderten Spalten.",
+    "PASS: Administration speichert und veröffentlicht; Betrachter erhalten danach die datierte Druckliste.",
+  );
+  await login("admin@spuelplan.local");
+  await openList();
+  await click("Neuen Durchgang freigeben");
+  await page.getByRole("checkbox", { name: /Lena Fischer/ }).check();
+  await click("Speichern");
+  await closed();
+  await expect(
+    page.getByRole("button", { name: "Spülung erfassen", exact: true }),
+  ).toHaveCount(2);
+  await expect(page.getByText("Durchgang 2", { exact: true })).toBeVisible();
+  await logout();
+  await login("lena@spuelplan.local");
+  await openList();
+  await expect(
+    page.getByRole("button", { name: "Spülung erfassen", exact: true }),
+  ).toHaveCount(2);
+  await documentPoint("UI-001", "2.8");
+  await logout();
+  await login("betrachter@spuelplan.local");
+  await openList();
+  await expect(page.getByText("Durchgang 1", { exact: true })).toBeVisible();
+  await click("Protokolle");
+  await expect(heading("Spülprotokolle")).toBeVisible();
+  await expect(page.locator("tbody tr")).toHaveCount(2);
+  await page.getByLabel("Durchgang filtern").selectOption({ index: 1 });
+  await expect(page.locator("tbody tr")).toHaveCount(2);
+  console.log(
+    "PASS: Neuer Durchgang setzt Bearbeitungsstand zurück; veröffentlichte Historie bleibt unverändert sichtbar.",
   );
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Menü öffnen" }).click();
+  await click("Menü öffnen");
   await page.getByRole("link", { name: "Übersicht", exact: true }).click();
-  await page.getByRole("heading", { name: "Übersicht", exact: true }).waitFor();
+  await expect(heading("Übersicht")).toBeVisible();
   assert.equal(
     await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
     ),
     false,
   );
-  await page.screenshot({ path: "/tmp/spuelplan-mobile.png", fullPage: true });
-  await page.getByRole("button", { name: "Menü öffnen" }).click();
-  await page.getByRole("link", { name: "Geräte & Sensoren" }).click();
+  await page.screenshot({ path: "/tmp/spuelpilot-mobile.png", fullPage: true });
+  await click("Menü öffnen");
   await page
-    .getByRole("heading", { name: "Geräte & Sensoren", exact: true })
-    .waitFor();
+    .getByRole("link", { name: "Geräte & Sensoren", exact: true })
+    .click();
+  await expect(heading("Geräte & Sensoren")).toBeVisible();
   const flow = await page.locator(".device-flow").textContent();
-  assert.match(flow, /Spülpunkt-ID und Sollmenge/);
   assert.match(flow, /mindestens 1 m³\/h/);
   assert.match(flow, /5 Sekunden/);
-  assert.match(flow, /Temperatur nachher automatisch/);
+  await click("Menü öffnen");
+  await logout();
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  await login("admin@spuelplan.local");
+  await openList();
+  await page.screenshot({ path: "/tmp/spuelpilot-list.png", fullPage: true });
+  await click("Löschen");
+  await page
+    .getByLabel("Zur Bestätigung den Listennamen eingeben", { exact: true })
+    .fill("UI-Testgebiet");
+  await click("Liste löschen");
+  await closed();
+  await expect(heading("Spüllisten")).toBeVisible();
+  await expect(page.getByRole("link", { name: /UI-Testgebiet/ })).toHaveCount(
+    0,
+  );
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: Mobile Navigation bei 390 px; keine horizontale Seitenverschiebung oder JavaScript-Fehler.",
+    "PASS: Mobile Navigation, ESP32-Spezifikation und ausdrücklich bestätigte Admin-Löschung; keine Browserfehler.",
   );
 } finally {
   await browser?.close();

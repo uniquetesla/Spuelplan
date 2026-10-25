@@ -77,6 +77,7 @@ const app = document.querySelector("#app"),
 const isAdmin = () => user?.role === "admin";
 const canDocument = () =>
   ["admin", "employee"].includes(user?.role) &&
+  currentList?.status === "active" &&
   currentList?.assignees.some((a) => a.id === user.id);
 const button = (label, action, ic = "plus", secondary = false) =>
   `<button class="button ${secondary ? "secondary" : ""}" data-action="${action}">${icon(ic)}${label}</button>`;
@@ -111,10 +112,10 @@ function toast(message) {
   toast.timer = setTimeout(() => el.classList.remove("show"), 4500);
 }
 function brand() {
-  return `<div class="brand"><span class="brand-icon">${icon("drop")}</span><span>spülplan<small>Wasser im Fluss</small></span></div>`;
+  return `<div class="brand"><span class="brand-icon">${icon("drop")}</span><span>SpülPilot<small>Stadtwerke Heppenheim</small></span></div>`;
 }
 function renderAuth() {
-  app.innerHTML = `<div class="auth"><section class="auth-art">${brand()}<div class="auth-art-main">${icon("drop", "big-drop")}<h1>Gutes Wasser.<br>Klare Abläufe.</h1><p>Spülpunkte organisieren, Einsätze dokumentieren und die Wasserqualität im Blick behalten. Alles an einem Ort.</p></div><div class="auth-art-foot">Für die Menschen, die unser Wasser in Bewegung halten.</div></section><section class="auth-right"><form class="auth-form" id="auth-form"><div class="login-role">${status.setupRequired ? "Erste Schritte" : "Dein digitaler Spülplan"}</div><h2>${status.setupRequired ? "Willkommen an Bord." : "Schön, dass du da bist."}</h2><p>${status.setupRequired ? "Richte dein Administrationskonto ein, um Spüllisten und dein Team zu verwalten." : "Melde dich an und bring dein Wassernetz in Bewegung."}</p><div class="form-error" id="auth-error" role="alert"></div>${status.setupRequired ? '<div class="field"><label for="setup-token">Einrichtungsschlüssel</label><input id="setup-token" name="setup_token" type="password" required autocomplete="off"><small>Auf dem Server in data/setup-token hinterlegt.</small></div><div class="field"><label for="name">Dein Name</label><input id="name" name="name" required maxlength="100" autocomplete="name" placeholder="Vor- und Nachname"></div>' : ""}<div class="field"><label for="email">E-Mail-Adresse</label><input id="email" name="email" type="email" required autocomplete="username" maxlength="200" placeholder="name@unternehmen.de"></div><div class="field"><label for="password">Passwort</label><input id="password" name="password" type="password" required ${status.setupRequired ? 'minlength="12"' : ""} maxlength="128" autocomplete="${status.setupRequired ? "new-password" : "current-password"}" placeholder="${status.setupRequired ? "Mindestens 12 Zeichen" : "Dein Passwort"}"></div><button class="button" type="submit">${status.setupRequired ? "Administrationskonto erstellen" : "Anmelden"}${icon("arrow")}</button><div class="auth-security">${icon("lock")}Geschützter Zugang · Persönliche Berechtigungen</div>${status.demo && !status.setupRequired ? '<div class="auth-demo"><strong>Demo mit Beispieldaten</strong><br>Wähle eine Rolle. Das Demo-Passwort wurde beim Start festgelegt.<div><button type="button" data-demo="admin@spuelplan.local">Administration</button><button type="button" data-demo="lena@spuelplan.local">Mitarbeiter</button><button type="button" data-demo="betrachter@spuelplan.local">Betrachter</button></div></div>' : ""}</form></section></div>`;
+  app.innerHTML = `<div class="auth"><section class="auth-art">${brand()}<div class="auth-art-main">${icon("drop", "big-drop")}<h1>Unser Wassernetz.<br>Gemeinsam im Blick.</h1><p>Das interne Spülmanagement der Stadtwerke Heppenheim. Ausschließlich für berechtigte Beschäftigte und freigegebene Betrachter.</p></div><div class="auth-art-foot">Stadtwerke Heppenheim · Interner, geschützter Arbeitsbereich</div></section><section class="auth-right"><form class="auth-form" id="auth-form"><div class="login-role">${status.setupRequired ? "Erste Schritte" : "Dein digitaler SpülPilot"}</div><h2>${status.setupRequired ? "Willkommen an Bord." : "Schön, dass du da bist."}</h2><p>${status.setupRequired ? "Richte dein Administrationskonto ein, um Spüllisten und dein Team zu verwalten." : "Melde dich an und bring dein Wassernetz in Bewegung."}</p><div class="form-error" id="auth-error" role="alert"></div>${status.setupRequired ? '<div class="field"><label for="setup-token">Einrichtungsschlüssel</label><input id="setup-token" name="setup_token" type="password" required autocomplete="off"><small>Auf dem Server in data/setup-token hinterlegt.</small></div><div class="field"><label for="name">Dein Name</label><input id="name" name="name" required maxlength="100" autocomplete="name" placeholder="Vor- und Nachname"></div>' : ""}<div class="field"><label for="email">E-Mail-Adresse</label><input id="email" name="email" type="email" required autocomplete="username" maxlength="200" placeholder="name@unternehmen.de"></div><div class="field"><label for="password">Passwort</label><input id="password" name="password" type="password" required ${status.setupRequired ? 'minlength="12"' : ""} maxlength="128" autocomplete="${status.setupRequired ? "new-password" : "current-password"}" placeholder="${status.setupRequired ? "Mindestens 12 Zeichen" : "Dein Passwort"}"></div><button class="button" type="submit">${status.setupRequired ? "Administrationskonto erstellen" : "Anmelden"}${icon("arrow")}</button><div class="auth-security">${icon("lock")}Nur für berechtigte Personen · Keine öffentliche Registrierung</div>${status.demo && !status.setupRequired ? '<div class="auth-demo"><strong>Demo mit Beispieldaten</strong><br>Wähle eine Rolle. Das Demo-Passwort wurde beim Start festgelegt.<div><button type="button" data-demo="admin@spuelplan.local">Administration</button><button type="button" data-demo="lena@spuelplan.local">Mitarbeiter</button><button type="button" data-demo="betrachter@spuelplan.local">Betrachter</button></div></div>' : ""}</form></section></div>`;
   document.querySelectorAll("[data-demo]").forEach(
     (b) =>
       (b.onclick = () => {
@@ -156,7 +157,7 @@ const navItems = () => [
 ];
 function layout(content, section) {
   const nav = navItems();
-  app.innerHTML = `<div class="shell"><div class="menu-backdrop" data-action="menu"></div><aside class="sidebar">${brand()}<div class="nav-label">Arbeitsbereich</div><nav class="nav" aria-label="Hauptnavigation">${nav.map(([id, label, ic]) => `<a href="#/${id}" class="${section === id ? "active" : ""}" ${section === id ? 'aria-current="page"' : ""}>${icon(ic)}${label}${id === "lists" ? `<span class="count">${lists.length}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="water-note">${icon("wave")}<h4>Jeder Tropfen zählt.</h4><p>Gemeinsam für ein sicheres und zuverlässiges Trinkwassernetz.</p></div><div class="user"><div class="avatar">${esc(initials(user.name))}</div><div><strong>${esc(user.name)}</strong><small>${roleName[user.role]}</small></div><button class="logout" data-action="logout" title="Abmelden" aria-label="Abmelden">${icon("logout")}</button></div></div></aside><main class="main"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-action="menu" aria-label="Menü öffnen">${icon("menu")}</button>Arbeitsbereich ${icon("chevron")} <strong>${nav.find((x) => x[0] === section)?.[1] || "Spüllisten"}</strong></div><div class="top-right"><span class="system"><i class="dot"></i>Mit Datenbank verbunden</span><span class="top-date">${new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span><div class="avatar">${esc(initials(user.name))}</div></div></header><div class="content">${status.demo ? '<div class="demo-notice">Demo-Umgebung · Alle Spülpunkte, Personen und Messwerte sind Beispieldaten.</div>' : ""}${content}<footer class="footer"><span>© ${new Date().getFullYear()} Spülplan · Wasser im Fluss</span><span>${icon("shield")}Zugriff geschützt · ${roleName[user.role]}</span></footer></div></main></div>`;
+  app.innerHTML = `<div class="shell"><div class="menu-backdrop" data-action="menu"></div><aside class="sidebar">${brand()}<div class="nav-label">Arbeitsbereich</div><nav class="nav" aria-label="Hauptnavigation">${nav.map(([id, label, ic]) => `<a href="#/${id}" class="${section === id ? "active" : ""}" ${section === id ? 'aria-current="page"' : ""}>${icon(ic)}${label}${id === "lists" ? `<span class="count">${lists.length}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="water-note">${icon("wave")}<h4>Jeder Tropfen zählt.</h4><p>Spülmanagement für das Trinkwassernetz der Stadtwerke Heppenheim.</p></div><div class="user"><div class="avatar">${esc(initials(user.name))}</div><div><strong>${esc(user.name)}</strong><small>${roleName[user.role]}</small></div><button class="logout" data-action="logout" title="Abmelden" aria-label="Abmelden">${icon("logout")}</button></div></div></aside><main class="main"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-action="menu" aria-label="Menü öffnen">${icon("menu")}</button>Arbeitsbereich ${icon("chevron")} <strong>${nav.find((x) => x[0] === section)?.[1] || "Spüllisten"}</strong></div><div class="top-right"><span class="system"><i class="dot"></i>Mit Datenbank verbunden</span><span class="top-date">${new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span><div class="avatar">${esc(initials(user.name))}</div></div></header><div class="content">${status.demo ? '<div class="demo-notice">Demo-Umgebung · Alle Spülpunkte, Personen und Messwerte sind Beispieldaten.</div>' : ""}${content}<footer class="footer"><span>© ${new Date().getFullYear()} SpülPilot · Stadtwerke Heppenheim</span><span>${icon("shield")}Zugriff geschützt · ${roleName[user.role]}</span></footer></div></main></div>`;
   bindActions();
 }
 function heading(
@@ -173,10 +174,17 @@ function empty(title, description, action = "") {
 function stat(label, value, unit, foot, ic) {
   return `<div class="stat"><div class="stat-head">${label}<span class="stat-icon">${icon(ic)}</span></div><div class="stat-number">${value}<small>${unit}</small></div><div class="stat-foot">${foot}</div></div>`;
 }
+const statusName = {
+  active: "In Bearbeitung",
+  review: "Zur Prüfung",
+  published: "Für Betrachter freigegeben",
+};
+const statusBadge = (l) =>
+  `<span class="badge ${l.status === "review" ? "amber" : l.status === "published" ? "green" : "blue"}">${statusName[l.status]}</span>`;
 function listCard(l) {
   const completed = l.completed_count,
     total = l.point_count;
-  return `<a class="list-card" href="#/lists/${l.id}"><div class="list-card-top"><div class="folder">${icon("folder")}</div><span class="badge ${total && completed === total ? "green" : completed ? "blue" : ""}">${total && completed === total ? "Alle dokumentiert" : completed ? "In Bearbeitung" : "Noch offen"}</span></div><h3>${esc(l.name)}</h3><p class="description">${esc(l.description || "Deine Spülpunkte an einem Ort")}</p><div class="progress-label"><span>Dokumentierte Spülpunkte</span><strong>${completed} / ${total}</strong></div><div class="segments">${Array.from({ length: Math.min(total || 1, 25) }, (_, i) => `<i class="${i < Math.round((completed / (total || 1)) * Math.min(total || 1, 25)) ? "done" : ""}"></i>`).join("")}</div><div class="card-bottom"><span class="person-chip">${l.assignees.length ? `<span class="avatar">${esc(initials(l.assignees[0].name))}</span>${esc(l.assignees[0].name)}${l.assignees.length > 1 ? ` +${l.assignees.length - 1}` : ""}` : `${icon("users")}Noch nicht freigegeben`}</span>${icon("arrow")}</div></a>`;
+  return `<a class="list-card" href="#/lists/${l.id}"><div class="list-card-top"><div class="folder">${icon("folder")}</div>${statusBadge(l)}</div><h3>${esc(l.name)}</h3><p class="description">${esc(l.description || "Deine Spülpunkte an einem Ort")}</p><div class="progress-label"><span>Durchgang ${l.run_number} · Bearbeitet</span><strong>${completed} / ${total}</strong></div><div class="segments">${Array.from({ length: Math.min(total || 1, 25) }, (_, i) => `<i class="${i < Math.round((completed / (total || 1)) * Math.min(total || 1, 25)) ? "done" : ""}"></i>`).join("")}</div><div class="card-bottom"><span class="person-chip">${l.assignees.length ? `<span class="avatar">${esc(initials(l.assignees[0].name))}</span>${esc(l.assignees[0].name)}${l.assignees.length > 1 ? ` +${l.assignees.length - 1}` : ""}` : `${icon("users")}Noch nicht freigegeben`}</span>${icon("arrow")}</div></a>`;
 }
 function overview() {
   const total = lists.reduce((s, l) => s + l.point_count, 0),
@@ -190,7 +198,7 @@ function overview() {
         ? button("Neue Spülliste", "new-list")
         : button("Zu meinen Spüllisten", "go-lists", "folder"),
     ) +
-    `<section class="hero"><div class="hero-copy"><div class="hero-kicker">${icon("wave")}Für ein sauberes Trinkwassernetz</div><h2>Klare Planung. Sauberes Wasser.</h2><p>Behalte deine Spülpunkte im Blick und dokumentiere jede Spülung. Einfach, strukturiert und zuverlässig.</p></div><div class="hero-symbol">${icon("drop")}</div></section><div class="stats">${stat("Spülpunkte gesamt", total, "", `In ${lists.length} Spüllisten organisiert`, "pin")}${stat("Spülpunkte dokumentiert", done, "", `<span class="green">${total ? Math.round((done / total) * 100) : 0} %</span> mindestens einmal gespült`, "circlecheck")}${stat("Ohne Spülprotokoll", total - done, "", "Warten auf ihre erste Spülung", "clock")}${stat("Gespülte Menge", number(volume), "m³", `Aus ${flushes.length} dokumentierten Spülungen`, "drop")}</div><div class="section-head"><div><h2>${user.role === "employee" ? "Meine Spüllisten" : "Deine Spüllisten"}</h2><p>Eine Liste. Alle Spülpunkte. Alles im Blick.</p></div><a href="#/lists" class="text-link">Alle Listen ansehen ${icon("arrow")}</a></div><div class="list-grid">${lists.slice(0, 3).map(listCard).join("") || empty("Dein Wassernetz beginnt hier", isAdmin() ? "Lege deine erste Spülliste an und füge Spülpunkte hinzu." : "Hier erscheinen die für dich verfügbaren Spüllisten.", isAdmin() ? button("Erste Spülliste anlegen", "new-list") : "")}</div><section class="panel"><div class="panel-head"><div><h2>Letzte Spülungen</h2><p>Die neuesten Einträge aus deinem Wassernetz</p></div><a href="#/reports" class="text-link">Alle Protokolle ${icon("arrow")}</a></div>${reportTable(flushes.slice(0, 5), true)}</section>`
+    `${isAdmin() && lists.some((l) => l.status === "review") ? `<div class="notice review-notice">${icon("circlecheck")}<span><strong>${lists.filter((l) => l.status === "review").length} abgeschlossene Spülliste(n) warten auf deine Prüfung.</strong><br>Öffne die Liste, prüfe die Protokolle und speichere den Durchgang für Betrachter.</span></div>` : ""}<section class="hero"><div class="hero-copy"><div class="hero-kicker">${icon("wave")}Für ein sauberes Trinkwassernetz</div><h2>Klare Planung. Sauberes Wasser.</h2><p>Behalte deine Spülpunkte im Blick und dokumentiere jede Spülung. Einfach, strukturiert und zuverlässig.</p></div><div class="hero-symbol">${icon("drop")}</div></section><div class="stats">${stat("Spülpunkte gesamt", total, "", `In ${lists.length} Spüllisten organisiert`, "pin")}${stat("Spülpunkte dokumentiert", done, "", `<span class="green">${total ? Math.round((done / total) * 100) : 0} %</span> im aktuellen Durchgang bearbeitet`, "circlecheck")}${stat("Ohne Spülprotokoll", total - done, "", "Im aktuellen Durchgang noch offen", "clock")}${stat("Gespülte Menge", number(volume), "m³", `Aus ${flushes.length} dokumentierten Spülungen`, "drop")}</div><div class="section-head"><div><h2>${user.role === "employee" ? "Meine Spüllisten" : "Deine Spüllisten"}</h2><p>Eine Liste. Alle Spülpunkte. Alles im Blick.</p></div><a href="#/lists" class="text-link">Alle Listen ansehen ${icon("arrow")}</a></div><div class="list-grid">${lists.slice(0, 3).map(listCard).join("") || empty("Dein Wassernetz beginnt hier", isAdmin() ? "Lege deine erste Spülliste an und füge Spülpunkte hinzu." : "Hier erscheinen die für dich verfügbaren Spüllisten.", isAdmin() ? button("Erste Spülliste anlegen", "new-list") : "")}</div><section class="panel"><div class="panel-head"><div><h2>Letzte Spülungen</h2><p>Die neuesten Einträge aus deinem Wassernetz</p></div><a href="#/reports" class="text-link">Alle Protokolle ${icon("arrow")}</a></div>${reportTable(flushes.slice(0, 5), true)}</section>`
   );
 }
 function reportTable(rows, compact = false) {
@@ -199,7 +207,7 @@ function reportTable(rows, compact = false) {
       "Noch keine Spülungen",
       "Sobald eine Spülung dokumentiert wird, findest du hier das Protokoll.",
     );
-  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th>${compact ? "" : "<th>Soll m³</th>"}<th>Ist m³</th>${compact ? "" : "<th>Temp. vorher</th><th>Temp. nachher</th>"}<th>Trübung</th><th>Mitarbeiter</th><th>Datum</th></tr></thead><tbody>${rows.map((f) => `<tr><td><span class="point-id">${esc(f.code)}</span></td><td><strong>${esc(f.address)}</strong>${compact ? `<span class="sub">${esc(f.list_name)}</span>` : ""}</td>${compact ? "" : `<td>${number(f.target)}</td>`}<td><strong>${number(f.volume)}${compact ? " m³" : ""}</strong></td>${compact ? "" : `<td>${number(f.temperature_before)} °C</td><td>${number(f.temperature_after)} °C</td>`}<td><span class="badge ${f.turbidity ? "amber" : "green"}">${f.turbidity ? "Ja" : "Nein"}</span></td><td>${esc(f.employee)}</td><td>${date(f.flushed_at)}</td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th>${compact ? "" : "<th>Soll m³</th>"}<th>Ist m³</th>${compact ? "" : "<th>Temp. vorher</th><th>Temp. nachher</th>"}<th>Trübung</th><th>Mitarbeiter</th><th>Datum</th></tr></thead><tbody>${rows.map((f) => `<tr><td><span class="point-id">${esc(f.code)}</span><span class="sub">Durchgang ${f.run_number}</span></td><td><strong>${esc(f.address)}</strong>${compact ? `<span class="sub">${esc(f.list_name)}</span>` : ""}</td>${compact ? "" : `<td>${number(f.target)}</td>`}<td><strong>${number(f.volume)}${compact ? " m³" : ""}</strong></td>${compact ? "" : `<td>${number(f.temperature_before)} °C</td><td>${number(f.temperature_after)} °C</td>`}<td><span class="badge ${f.turbidity ? "amber" : "green"}">${f.turbidity ? "Ja" : "Nein"}</span></td><td>${esc(f.employee)}</td><td>${date(f.flushed_at)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 function listsPage() {
   return (
@@ -224,12 +232,16 @@ function listDetail() {
       esc(l.name),
       esc(l.description || "Spülpunkte und Dokumentation dieser Liste"),
       isAdmin()
-        ? button("Freigabe", "assign", "users", true) +
+        ? l.status === "active"
+          ? button("Freigabe", "assign", "users", true) +
             button("Spülpunkt anlegen", "new-point")
+          : l.status === "review"
+            ? button("Speichern & für Betrachter freigeben", "publish", "check")
+            : button("Neuen Durchgang freigeben", "restart", "plus")
         : button("Protokolle", "list-reports", "file", true),
       "DEINE SPÜLLISTE",
     ) +
-    `<div class="detail-strip"><div><small>Spülpunkte</small><strong>${l.point_count} angelegt</strong></div><div><small>Dokumentiert</small><strong>${l.completed_count} von ${l.point_count} Punkten</strong></div><div><small>Freigegeben für</small><strong>${esc(l.assignees.map((a) => a.name).join(", ") || "Noch keine Personen")}</strong></div><div><small>Letzte Spülung</small><strong>${date(l.last_flush)}</strong></div></div><div class="section-head"><div><h2>Spülpunkte</h2><p>Wähle einen Punkt für Details${canDocument() ? " und die nächste Spülung" : ""}.</p></div>${isAdmin() ? `<div class="actions"><button class="text-link" data-action="edit-list">${icon("edit")}Liste bearbeiten</button><button class="text-link" data-action="list-reports">${icon("file")}Protokolle</button></div>` : ""}</div><div class="toolbar"><div class="search">${icon("search")}<input id="point-search" type="search" placeholder="ID oder Adresse suchen …" aria-label="Spülpunkte suchen"></div></div><section class="panel" id="points-results">${pointTable(points)}</section><div class="notice">${icon("info")}<span>„Dokumentiert“ bedeutet: Es gibt mindestens ein Spülprotokoll. Jeder Punkt kann erneut gespült werden; alle bisherigen Einträge bleiben erhalten.</span></div>`
+    `<div class="lifecycle-strip">${statusBadge(l)}<span>Durchgang ${l.run_number}</span><span>${l.published_count} gespeicherte Durchgänge</span></div><div class="detail-strip"><div><small>Spülpunkte</small><strong>${l.point_count} angelegt</strong></div><div><small>Dokumentiert</small><strong>${l.completed_count} von ${l.point_count} Punkten</strong></div><div><small>Freigegeben für</small><strong>${esc(l.assignees.map((a) => a.name).join(", ") || "Noch keine Personen")}</strong></div><div><small>Letzte Spülung</small><strong>${date(l.last_flush)}</strong></div></div><div class="section-head"><div><h2>Spülpunkte</h2><p>Wähle einen Punkt für Details${canDocument() ? " und die nächste Spülung" : ""}.</p></div>${isAdmin() ? `<div class="actions">${l.status === "active" ? `<button class="text-link" data-action="edit-list">${icon("edit")}Liste bearbeiten</button>` : ""}<button class="text-link" data-action="list-reports">${icon("file")}Protokolle</button><button class="text-link delete-link" data-action="delete-list">${icon("close")}Löschen</button></div>` : ""}</div><div class="toolbar"><div class="search">${icon("search")}<input id="point-search" type="search" placeholder="ID oder Adresse suchen …" aria-label="Spülpunkte suchen"></div></div><section class="panel" id="points-results">${pointTable(points)}</section><div class="notice">${icon("info")}<span>${l.status === "active" ? "Jeder Punkt wird einmal pro Durchgang bearbeitet. Nach dem letzten offenen Punkt geht die Liste automatisch zur Prüfung an die Administration und verschwindet bei den Mitarbeitern." : l.status === "review" ? "Dieser Durchgang ist abgeschlossen. Die Administration prüft und speichert ihn und gibt ihn anschließend für Betrachter frei." : "Dieser Durchgang ist gespeichert und für Betrachter freigegeben. Ein neuer Durchgang beginnt wieder mit offenen Punkten; gespeicherte Ergebnisse bleiben erhalten."}</span></div>`
   );
 }
 function pointTable(rows) {
@@ -239,9 +251,11 @@ function pointTable(rows) {
       isAdmin()
         ? "Füge dieser Liste einen Spülpunkt hinzu."
         : "Für diese Auswahl sind keine Spülpunkte vorhanden.",
-      isAdmin() ? button("Spülpunkt anlegen", "new-point") : "",
+      isAdmin() && currentList.status === "active"
+        ? button("Spülpunkt anlegen", "new-point")
+        : "",
     );
-  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th><th>Sollmenge</th><th>Letzte Spülung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((p) => `<tr><td><span class="point-id">${esc(p.code)}</span></td><td><strong>${esc(p.address)}</strong></td><td>${number(p.target)} m³</td><td>${p.last_flush ? date(p.last_flush) : "—"}</td><td><span class="badge ${p.last_flush ? "green" : ""}">${p.last_flush ? "Dokumentiert" : "Noch offen"}</span></td><td><div class="actions">${canDocument() ? `<button class="table-action" data-action="flush" data-id="${p.id}">Spülung erfassen ${icon("arrow")}</button>` : ""}${isAdmin() || user.role === "viewer" ? `<button class="table-action" data-action="point-detail" data-id="${p.id}">${isAdmin() ? "Bearbeiten" : "Details"}${icon(isAdmin() ? "edit" : "chevron")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th><th>Sollmenge</th><th>Letzte Spülung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((p) => `<tr><td><span class="point-id">${esc(p.code)}</span></td><td><strong>${esc(p.address)}</strong></td><td>${number(p.target)} m³</td><td>${p.last_flush ? date(p.last_flush) : "—"}</td><td><span class="badge ${p.completed ? "green" : ""}">${p.completed ? "Bearbeitet" : "Noch offen"}</span></td><td><div class="actions">${canDocument() && !p.completed ? `<button class="table-action" data-action="flush" data-id="${p.id}">Spülung erfassen ${icon("arrow")}</button>` : ""}${isAdmin() || user.role === "viewer" ? `<button class="table-action" data-action="point-detail" data-id="${p.id}">${isAdmin() && currentList.status === "active" && !p.completed ? "Bearbeiten" : "Details"}${icon(isAdmin() ? "edit" : "chevron")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>`;
 }
 function reportsPage() {
   const selected =
@@ -256,7 +270,7 @@ function reportsPage() {
       button("Liste drucken", "print", "print", true),
       "DOKUMENTATION & NACHWEISE",
     ) +
-    `<div class="print-heading"><h1>Spülprotokoll${selected ? " · " + esc(lists.find((l) => String(l.id) === selected)?.name || "") : ""}</h1><p>Erstellt am ${date(new Date().toISOString())} · ${esc(user.name)} · ${filtered.length} Spülungen</p></div><div class="toolbar"><div class="search">${icon("search")}<input id="report-search" type="search" placeholder="ID, Adresse oder Mitarbeiter suchen …" aria-label="Protokolle suchen"></div><select id="report-list" aria-label="Spülliste filtern"><option value="">Alle Spüllisten</option>${lists.map((l) => `<option value="${l.id}" ${String(l.id) === selected ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div><section class="panel" id="report-results">${reportTable(filtered)}</section>`
+    `<div class="print-heading"><h1>Spülprotokoll${selected ? " · " + esc(lists.find((l) => String(l.id) === selected)?.name || "") : ""}</h1><p>Erstellt am ${date(new Date().toISOString())} · ${esc(user.name)} · ${filtered.length} Spülungen</p></div><div class="toolbar"><div class="search">${icon("search")}<input id="report-search" type="search" placeholder="ID, Adresse oder Mitarbeiter suchen …" aria-label="Protokolle suchen"></div><select id="report-list" aria-label="Spülliste filtern"><option value="">Alle Spüllisten</option>${lists.map((l) => `<option value="${l.id}" ${String(l.id) === selected ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select><select id="report-run" aria-label="Durchgang filtern"><option value="">Alle Durchgänge</option>${[...new Map(flushes.map((f) => [f.run_id, f])).values()].map((f) => `<option value="${f.run_id}">${esc(f.list_name)} · Durchgang ${f.run_number}</option>`).join("")}</select></div><section class="panel" id="report-results">${reportTable(filtered)}</section>`
   );
 }
 function usersPage() {
@@ -274,7 +288,7 @@ function devicesPage() {
   return (
     heading(
       "Geräte & Sensoren",
-      "Die nächste Verbindung für deinen Spülplan.",
+      "Die nächste Verbindung für deinen SpülPilot.",
       "",
       "EIN BLICK NACH VORN",
     ) +
@@ -335,17 +349,24 @@ async function render() {
         const rows = flushes.filter(
           (f) =>
             (!id || String(f.list_id) === id) &&
+            (!document.querySelector("#report-run").value ||
+              String(f.run_id) ===
+                document.querySelector("#report-run").value) &&
             `${f.code} ${f.address} ${f.employee}`.toLowerCase().includes(q),
         );
         document.querySelector("#report-results").innerHTML = reportTable(rows);
         document.querySelector(".print-heading p").textContent =
-          `Erstellt am ${date(new Date().toISOString())} · ${user.name} · ${rows.length} Spülungen${q ? " · Suche: " + q : ""}`;
+          `Erstellt am ${date(new Date().toISOString())} · ${user.name} · ${rows.length} Spülungen${document.querySelector("#report-run").selectedIndex > 0 ? " · " + document.querySelector("#report-run").selectedOptions[0].textContent : ""}${q ? " · Suche: " + q : ""}`;
         document.querySelector(".print-heading h1").textContent =
           "Spülprotokoll" +
           (id ? " · " + lists.find((l) => String(l.id) === id)?.name : "");
       };
       document.querySelector("#report-search").oninput = filter;
-      document.querySelector("#report-list").onchange = filter;
+      document.querySelector("#report-list").onchange = () => {
+        document.querySelector("#report-run").value = "";
+        filter();
+      };
+      document.querySelector("#report-run").onchange = filter;
       filter();
     } else if (section === "devices") {
       layout(devicesPage(), "devices");
@@ -442,22 +463,26 @@ function pointModal(p) {
     },
   );
 }
-async function assignModal() {
+async function assignModal(restart = false) {
   users = await api("/users");
   const eligibleUsers = users.filter(
     (u) => ["admin", "employee"].includes(u.role) && u.active,
   );
   showModal(
-    "Liste freigeben",
+    restart ? "Neuen Durchgang freigeben" : "Liste freigeben",
     esc(currentList.name),
-    `<p class="subtitle modal-intro">Administration und Mitarbeiter können für diese Liste freigegeben werden und anschließend Spülungen dokumentieren. Betrachter bleiben ausschließlich leseberechtigt.</p>${eligibleUsers.map((u) => `<label class="checkbox-row"><input type="checkbox" name="assignee" value="${u.id}" ${currentList.assignees.some((a) => a.id === u.id) ? "checked" : ""}><span><strong>${esc(u.name)}</strong><small>${esc(u.email)} · ${roleName[u.role]}</small></span></label>`).join("") || '<div class="notice">Es sind keine aktiven Benutzer aus Administration oder Mitarbeitern verfügbar.</div>'}`,
+    `<p class="subtitle modal-intro">${restart ? "Der gespeicherte Durchgang bleibt unverändert für Betrachter erhalten. Alle Punkte werden im neuen Durchgang wieder offen. " : ""}Administration und Mitarbeiter können für diese Liste freigegeben werden. Betrachter sehen nur gespeicherte und freigegebene Durchgänge.</p>${eligibleUsers.map((u) => `<label class="checkbox-row"><input type="checkbox" name="assignee" value="${u.id}" ${currentList.assignees.some((a) => a.id === u.id) ? "checked" : ""}><span><strong>${esc(u.name)}</strong><small>${esc(u.email)} · ${roleName[u.role]}</small></span></label>`).join("") || '<div class="notice">Es sind keine aktiven Benutzer aus Administration oder Mitarbeitern verfügbar.</div>'}`,
     async (data, form) => {
       await send(
-        `/lists/${currentList.id}/assignments`,
+        `/lists/${currentList.id}/${restart ? "restart" : "assignments"}`,
         { user_ids: new FormData(form).getAll("assignee").map(Number) },
-        "PUT",
+        restart ? "POST" : "PUT",
       );
-      toast("Listenfreigabe aktualisiert.");
+      toast(
+        restart
+          ? "Neuer Durchgang freigegeben. Alle Punkte sind wieder offen."
+          : "Listenfreigabe aktualisiert.",
+      );
     },
   );
 }
@@ -516,25 +541,63 @@ function flushModal(p) {
     esc(p.code) + " · " + esc(p.address),
     `<div class="measure-box">${icon("drop")}<div><strong>Geplante Spülmenge</strong><small>${esc(currentList.name)}</small></div><b>${number(p.target)} <small>m³</small></b></div><div class="form-row">${field("Temperatur vorher · °C", "temperature_before", "", "number", 'required min="0" max="100" step="0.1" placeholder="22,0"')}${field("Temperatur nachher · °C", "temperature_after", "", "number", 'required min="0" max="100" step="0.1" placeholder="14,0"')}</div>${field("Tatsächlich gespülte Menge · m³", "volume", "", "number", 'required min="0.001" max="1000000" step="any" placeholder="z. B. 2,6"')}<div class="field"><label for="f-turbidity">Trübung festgestellt?</label><select id="f-turbidity" name="turbidity" required><option value="">Bitte auswählen</option><option value="false">Nein – keine Trübung</option><option value="true">Ja – Trübung vorhanden</option></select></div><div class="notice">${icon("clock")}<span>Das Spüldatum wird beim Speichern automatisch eingetragen.<br>Mitarbeiter: <strong>${esc(user.name)}</strong><br>Das Protokoll bleibt als unveränderlicher Nachweis erhalten.</span></div>`,
     async (data) => {
-      await send(`/points/${p.id}/flushes`, {
+      const result = await send(`/points/${p.id}/flushes`, {
         temperature_before: Number(data.temperature_before),
         temperature_after: Number(data.temperature_after),
         volume: Number(data.volume),
         turbidity: data.turbidity === "true",
       });
-      toast("Spülung erfolgreich dokumentiert.");
+      if (result.status === "review") {
+        location.hash = "#/lists";
+        toast(
+          "Alle Punkte bearbeitet. Die Liste wurde der Administration zur Prüfung übergeben.",
+        );
+      } else toast("Spülung erfolgreich dokumentiert.");
     },
     "Spülung speichern",
   );
 }
 async function pointDetail(p) {
-  if (isAdmin()) return pointModal(p);
+  if (isAdmin() && currentList.status === "active" && !p.completed)
+    return pointModal(p);
   const history = await api("/flushes?point=" + p.id);
   showModal(
     esc(p.code),
     esc(p.address),
     `<div class="measure-box">${icon("drop")}<div><strong>Sollmenge</strong><small>Letzte Spülung: ${date(p.last_flush)}</small></div><b>${number(p.target)} <small>m³</small></b></div><h3 class="history-heading">Bisherige Spülungen</h3>${reportTable(history)}`,
     null,
+  );
+}
+function publishModal() {
+  showModal(
+    "Durchgang speichern & freigeben",
+    esc(currentList.name),
+    `<div class="notice">${icon("shield")}<span>Durchgang ${currentList.run_number} mit ${currentList.point_count} bearbeiteten Punkten wird unverändert gespeichert und für alle Betrachter freigegeben. Danach kannst du einen neuen Durchgang starten. Die bisherigen Protokolle bleiben erhalten.</span></div>`,
+    async () => {
+      await send(`/lists/${currentList.id}/publish`, {});
+      toast("Durchgang gespeichert und für Betrachter freigegeben.");
+    },
+    "Speichern & freigeben",
+  );
+}
+function deleteListModal() {
+  showModal(
+    "Spülliste löschen",
+    esc(currentList.name),
+    `<div class="notice">${icon("info")}<span>Die Liste und sämtliche Durchgänge werden aus der Anwendung entfernt. Es gibt keine automatische Löschung; diese Aktion ist nur der Administration möglich. Intern werden die Daten als gelöscht markiert.</span></div>` +
+      field(
+        "Zur Bestätigung den Listennamen eingeben",
+        "confirm_name",
+        "",
+        "text",
+        "required",
+      ),
+    async (data) => {
+      await send(`/lists/${currentList.id}`, data, "DELETE");
+      location.hash = "#/lists";
+      toast("Spülliste gelöscht.");
+    },
+    "Liste löschen",
   );
 }
 function bindActions(root = app) {
@@ -560,6 +623,9 @@ function bindActions(root = app) {
           else if (action === "point-detail") await pointDetail(p);
           else if (action === "flush") flushModal(p);
           else if (action === "assign") await assignModal();
+          else if (action === "restart") await assignModal(true);
+          else if (action === "publish") publishModal();
+          else if (action === "delete-list") deleteListModal();
           else if (action === "new-user") userModal();
           else if (action === "edit-user")
             userModal(users.find((u) => u.id === Number(b.dataset.id)));
@@ -586,7 +652,7 @@ async function init() {
     } catch {}
     await render();
   } catch (e) {
-    app.innerHTML = `<div class="error-page"><h1>Spülplan ist gerade nicht erreichbar.</h1><p>${esc(e.message)}</p><p>Bitte lade die Seite erneut.</p></div>`;
+    app.innerHTML = `<div class="error-page"><h1>SpülPilot ist gerade nicht erreichbar.</h1><p>${esc(e.message)}</p><p>Bitte lade die Seite erneut.</p></div>`;
   }
 }
 init();

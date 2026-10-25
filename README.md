@@ -1,6 +1,6 @@
-# Spülplan
+# SpülPilot · Stadtwerke Heppenheim
 
-Webanwendung für Trinkwasserspülungen mit deutscher, responsiver Oberfläche, SQLite-Datenbank und drei serverseitig geprüften Benutzerrollen. Node.js ab 22.13 (empfohlen: Node 24 LTS). Kein externer Datenbankdienst erforderlich.
+Webanwendung für Trinkwasserspülungen mit deutscher, responsiver Oberfläche, SQLite-Datenbank und drei serverseitig geprüften Benutzerrollen. Node.js ab Version 24 LTS. Kein externer Datenbankdienst erforderlich.
 
 ## Start
 
@@ -29,15 +29,20 @@ Die Beispieldaten werden ausschließlich in eine leere Datenbank eingetragen. Di
 
 Verwende ein eigenes Passwort **ausschließlich für eine lokale Demo**. Eine Demo nicht öffentlich mit diesen Zugangsdaten betreiben. Ein anderes `DEMO_PASSWORD` beim Neustart ändert bestehende Konten nicht. Die aktuelle Cloud-Entwicklungsinstanz nutzt diese separate Demo-Datenbank.
 
-## Ablauf
+## Listenablauf und gespeicherte Durchgänge
 
-1. Administration legt Benutzer unter **Team & Zugänge** an.
-2. Administration erstellt eine Spülliste und darin Spülpunkte mit eindeutiger ID, Adresse und Sollmenge in m³.
-3. Unter **Freigabe** werden einer Liste aktive Benutzer der Rollen Administration und Mitarbeiter zugeordnet. Die Freigabe gilt auch für später hinzugefügte Punkte.
-4. Mitarbeiter sehen ausschließlich ihre freigegebenen Listen und erfassen Temperatur vorher/nachher, tatsächliche Menge und Trübung (Ja/Nein). Das Spüldatum und die angemeldete Person werden automatisch eingetragen. Auch Administration kann nach ausdrücklicher Listenfreigabe Spülungen dokumentieren.
-5. Betrachter sehen alle Listen und Protokolle, können nach Liste bzw. Text filtern und die gefilterte Liste drucken oder über den Browser als PDF speichern. Administration kann alle Listen verwalten, Protokolle lesen und drucken sowie in ausdrücklich für sie freigegebenen Listen selbst Spülungen erfassen.
+1. Die Administration legt Benutzer, Spüllisten und Spülpunkte an. Der erste Durchgang beginnt mit offenen Punkten. Eine leere Liste geht nicht automatisch zur Prüfung.
+2. Eine Liste wird aktiven Mitarbeitern und/oder Administrationskonten freigegeben. Nur diese Personen können im aktuellen Durchgang Messwerte erfassen; Betrachter erhalten keine Bearbeitungsfreigabe.
+3. Jeder Punkt kann pro Durchgang einmal bearbeitet werden. Die letzte erforderliche Spülung übergibt den Durchgang automatisch in **Zur Prüfung**. Die Liste verschwindet bei Mitarbeitern, bleibt bei der Administration erhalten und ist für weitere Messungen gesperrt.
+4. Die Administration prüft die Protokolle und wählt **Speichern & für Betrachter freigeben**. Erst danach sehen Betrachter diesen Durchgang, seine Punkte und Messwerte und können ihn ausdrucken. Punktstammdaten werden als historische Momentaufnahme gespeichert.
+5. Mit **Neuen Durchgang freigeben** wählt die Administration die erneut berechtigten Personen. Alle Punkte sind im neuen Durchgang wieder offen. Gespeicherte Durchgänge bleiben unverändert für Administration und Betrachter erhalten. Neue und ungeprüfte Daten werden Betrachtern auch beim direkten API-Zugriff nicht angezeigt.
+6. Die Administration kann Protokolle nach Liste und Durchgang filtern. Betrachter sehen ausschließlich veröffentlichte Durchgänge; Mitarbeiter ausschließlich ihre laufenden Freigaben.
 
-„Dokumentiert“ bedeutet mindestens ein gespeichertes Protokoll, keine Aussage über eine terminliche Fälligkeit. Wiederholte Spülungen sind möglich. Die letzte Spülung wird aus dem neuesten Protokoll ermittelt. Protokolle werden nicht überschrieben; ID, Adresse, Sollmenge und Mitarbeitername werden als historische Momentaufnahme gespeichert. Zeitstempel bleiben intern für Reihenfolge und die Ermittlung der letzten Spülung als UTC gespeichert. Oberfläche und Ausdruck zeigen ausschließlich das Kalenderdatum in Europe/Berlin, keine Uhrzeit.
+Listen und Protokolle werden niemals automatisch nach Alter gelöscht. Nur die Administration kann eine Liste mit Bestätigung ihres exakten Namens löschen. Dabei werden Liste und alle Durchgänge aus der Anwendung entfernt und die Freigaben entzogen. Die Daten werden intern logisch als gelöscht markiert und nicht automatisch physisch aus der Datenbank entfernt. Das verhindert versehentlichen Datenverlust; ein endgültiges Bereinigungskonzept ist betrieblich festzulegen.
+
+Vorhandene Datenbanken werden ergänzend und ohne Zurücksetzen migriert. Vor der Migration einer gefüllten Datenbank entsteht eine konsistente SQLite-Sicherung neben der Datei. Vorhandene Spülungen bleiben einschließlich früherer Wiederholungsmessungen erhalten und werden dem ersten Durchgang zugeordnet. Vollständige Altdurchgänge landen zur Prüfung bei der Administration, werden aber niemals automatisch für Betrachter veröffentlicht.
+
+Zeitstempel bleiben intern für Reihenfolge und die Ermittlung der letzten Spülung als UTC gespeichert. Oberfläche und Ausdruck zeigen ausschließlich das Kalenderdatum in Europe/Berlin, keine Uhrzeit. Jeder neue Datensatz enthält die damalige Spülpunkt-ID, Adresse, Sollmenge und den Namen der erfassenden Person.
 
 ## Sicherheit und Betrieb
 
@@ -48,13 +53,13 @@ Verwende ein eigenes Passwort **ausschließlich für eine lokale Demo**. Eine De
 - Deaktivierte Benutzer verlieren ihre Sitzungen und Freigaben. Passwort- und Rollenänderungen beenden bestehende Sitzungen. Der eigene Administrationszugang kann sich nicht selbst deaktivieren oder herabstufen.
 - Neue Benutzer und Passwortänderungen werden von der Administration verwaltet. Passwort-Selbstzurücksetzung, E-Mail-Einladungen und Zwei-Faktor-Authentifizierung sind noch nicht implementiert.
 
-Für einen öffentlichen Betrieb HTTPS vor dem Node-Prozess terminieren und die **exakte öffentliche Herkunft** setzen, beispielsweise:
+Für den ortsunabhängig erreichbaren, internen Betrieb HTTPS vor dem Node-Prozess terminieren und die **exakte öffentliche Herkunft** setzen, beispielsweise:
 
 ```sh
 APP_ORIGIN=https://spuelplan.example.de COOKIE_SECURE=true HOST=127.0.0.1 PORT=3000 npm start
 ```
 
-`APP_ORIGIN` muss ohne abschließenden Schrägstrich angegeben werden. Bei `COOKIE_SECURE=true` werden Cookies ausschließlich über HTTPS übertragen und HSTS aktiviert. Niemals HTTP und unsichere Cookies für einen öffentlichen Betrieb verwenden. Vorher Demo-Datenbank durch persönliche produktive Datenbank ersetzen, persönliche Konten einrichten, Zugriffe und Backups absichern. Die Anwendung ist nicht veröffentlicht; Domain, TLS und Hosting sind separat einzurichten.
+`APP_ORIGIN` muss ohne abschließenden Schrägstrich angegeben werden. Bei `COOKIE_SECURE=true` werden Cookies ausschließlich über HTTPS übertragen und HSTS aktiviert. Niemals HTTP und unsichere Cookies für den von außen erreichbaren Betrieb verwenden. Vorher Demo-Datenbank durch persönliche produktive Datenbank ersetzen, persönliche Konten einrichten, Zugriffe und Backups absichern. Die Anwendung ist nicht veröffentlicht; Domain, TLS und Hosting sind separat einzurichten.
 
 Konfiguration: `PORT` (3000), `HOST` (0.0.0.0), `DB_PATH`, `APP_ORIGIN`, `COOKIE_SECURE`, `DEMO_MODE`, `DEMO_PASSWORD` (nur für das initiale Demo-Seeding). Geheimnisse nicht in Git eintragen.
 
@@ -65,7 +70,7 @@ npm run dev
 npm test
 ```
 
-Die neun Integrationstests starten eine eigene temporäre Datenbank. Sie prüfen Ersteinrichtung, Login, CSRF, Rollenrechte, Listenfreigaben, Eingabevalidierung, Zeitstempel, historische Werte, Freigabeentzug, Deaktivierung und Abmeldung.
+Die Integrationstests verwenden temporäre Datenbanken und prüfen Anmeldung, Rechte, den vollständigen Listenablauf über mehrere Durchgänge, Veröffentlichung, historische Snapshots, Löschung, Dublettenschutz und die sichere Migration bestehender Datenbanken.
 
 Der zusätzliche Browser-Smoke-Test erstellt in einer temporären Datenbank eine Liste samt Punkt, gibt sie frei, dokumentiert als Mitarbeiter eine Spülung, prüft den Betrachter-Ausdruck als PDF und die mobile Navigation:
 
@@ -110,3 +115,7 @@ Für die eigentliche Integration sind BLE-Service-/Characteristic-UUIDs, Einheit
 Die 5 Sekunden beziehen sich auf das erstmalige Erreichen der Durchflussschwelle; ein Neustart bei Unterschreitung ist bisher nicht vereinbart. Ist die Sollmenge bereits vor der Vorher-Messung erreicht, fehlen Messwerte oder bricht die Verbindung ab, darf kein vollständiges Protokoll behauptet werden. Ein Wechsel des Spülpunkts während eines laufenden Auftrags muss verhindert bzw. der Auftrag ausdrücklich abgebrochen werden. Gerätezeit, Sequenznummern und eine Auftrags-ID werden für Zuordnung, Wiederverbindung und Schutz vor Doppelübertragungen benötigt; sie werden nicht als Uhrzeit im Benutzerprotokoll angezeigt. Eine Ventilabschaltung ist mit dieser Beschreibung nicht beauftragt.
 
 Dieser Ablauf ist als Integrationsanforderung festgehalten; die aktuelle Website erfasst Messwerte weiterhin manuell und steuert noch kein reales Gerät.
+
+## Interne Erreichbarkeit
+
+SpülPilot ist ausschließlich für berechtigte Personen der Stadtwerke Heppenheim vorgesehen. Es gibt keine öffentliche Registrierung und keine ohne Anmeldung abrufbaren Arbeitsdaten. Die IT stellt die ortsunabhängige Erreichbarkeit über HTTPS und die betrieblich vorgesehenen Zugangswege bereit. Eine konkrete, noch nicht installierte Proxyvorlage und Betriebsanweisungen stehen unter [deploy/README.md](deploy/README.md).

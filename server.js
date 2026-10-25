@@ -1,5 +1,5 @@
 import express from "express";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, backup } from "node:sqlite";
 import {
   randomBytes,
   scryptSync,
@@ -16,6 +16,25 @@ import {
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+if (process.env.NODE_ENV === "production") {
+  let origin;
+  try {
+    origin = new URL(process.env.APP_ORIGIN);
+  } catch {
+    throw new Error(
+      "Für den internen Produktivbetrieb ist eine gültige APP_ORIGIN erforderlich.",
+    );
+  }
+  if (
+    origin.protocol !== "https:" ||
+    origin.origin !== process.env.APP_ORIGIN ||
+    process.env.COOKIE_SECURE !== "true" ||
+    process.env.DEMO_MODE === "true"
+  )
+    throw new Error(
+      "Produktivbetrieb benötigt HTTPS, COOKIE_SECURE=true und ausgeschalteten Demomodus.",
+    );
+}
 const root = dirname(fileURLToPath(import.meta.url));
 const dbPath = process.env.DB_PATH || resolve(root, "data/spuelplan.sqlite");
 mkdirSync(dirname(dbPath), { recursive: true });
@@ -32,6 +51,31 @@ CREATE INDEX IF NOT EXISTS points_list_idx ON points(list_id);
 CREATE INDEX IF NOT EXISTS flushes_point_time_idx ON flushes(point_id,flushed_at DESC);
 CREATE INDEX IF NOT EXISTS assignments_user_idx ON assignments(user_id);
 CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON sessions(expires);
+`);
+// Additive migration: keep all existing lists, accounts and measurements.
+const needsWorkflowMigration = !db
+  .prepare("PRAGMA table_info(flushes)")
+  .all()
+  .some((c) => c.name === "run_id");
+if (needsWorkflowMigration && db.prepare("SELECT 1 FROM lists LIMIT 1").get()) {
+  await backup(db, dbPath + ".before-workflow-" + Date.now() + ".sqlite");
+}
+if (
+  !db
+    .prepare("PRAGMA table_info(lists)")
+    .all()
+    .some((c) => c.name === "deleted_at")
+)
+  db.exec("ALTER TABLE lists ADD COLUMN deleted_at TEXT");
+if (needsWorkflowMigration)
+  db.exec(
+    "ALTER TABLE flushes ADD COLUMN run_id INTEGER REFERENCES list_runs(id)",
+  );
+db.exec(`
+CREATE TABLE IF NOT EXISTS list_runs(id INTEGER PRIMARY KEY,list_id INTEGER NOT NULL REFERENCES lists(id),number INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','review','published')),created_at TEXT NOT NULL,completed_at TEXT,published_at TEXT,name_snapshot TEXT NOT NULL,description_snapshot TEXT NOT NULL,UNIQUE(list_id,number));
+CREATE TABLE IF NOT EXISTS run_points(run_id INTEGER NOT NULL REFERENCES list_runs(id),point_id INTEGER NOT NULL REFERENCES points(id),code TEXT NOT NULL,address TEXT NOT NULL,target REAL NOT NULL,PRIMARY KEY(run_id,point_id));
+CREATE INDEX IF NOT EXISTS list_runs_list_idx ON list_runs(list_id,number DESC);
+CREATE INDEX IF NOT EXISTS flushes_run_point_idx ON flushes(run_id,point_id);
 `);
 const setupTokenPath = resolve(dirname(dbPath), "setup-token");
 if (!oneUserExists() && !existsSync(setupTokenPath))
@@ -64,6 +108,7 @@ app.use((req, res, next) => {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
+    "X-Robots-Tag": "noindex, nofollow, noarchive",
     "Content-Security-Policy":
       "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
   });
@@ -116,13 +161,62 @@ const publicUser = (s) => ({
   email: s.email,
   role: s.role,
 });
-const canList = (s, id) =>
-  s.role !== "employee" ||
+const currentRun = (id) =>
+  one(
+    "SELECT * FROM list_runs WHERE list_id=? ORDER BY number DESC LIMIT 1",
+    id,
+  );
+const publishedRun = (id) =>
+  one(
+    "SELECT * FROM list_runs WHERE list_id=? AND status='published' ORDER BY number DESC LIMIT 1",
+    id,
+  );
+const assigned = (userId, listId) =>
   !!one(
     "SELECT 1 FROM assignments WHERE list_id=? AND user_id=?",
-    id,
-    s.user_id,
+    listId,
+    userId,
   );
+const visibleRun = (session, id) => {
+  if (!one("SELECT 1 FROM lists WHERE id=? AND deleted_at IS NULL", id))
+    return null;
+  const r = session.role === "viewer" ? publishedRun(id) : currentRun(id);
+  if (
+    !r ||
+    (session.role === "employee" &&
+      (r.status !== "active" || !assigned(session.user_id, id)))
+  )
+    return null;
+  return r;
+};
+const finishIfComplete = (id) => {
+  const r = currentRun(id);
+  if (r?.status !== "active") return;
+  const counts = one(
+    "SELECT count(*) total,sum(CASE WHEN EXISTS(SELECT 1 FROM flushes f WHERE f.point_id=p.id AND f.run_id=?) THEN 1 ELSE 0 END) completed FROM points p WHERE list_id=? AND active=1",
+    r.id,
+    id,
+  );
+  if (counts.total > 0 && counts.total === counts.completed)
+    run(
+      "UPDATE list_runs SET status='review',completed_at=? WHERE id=?",
+      new Date().toISOString(),
+      r.id,
+    );
+};
+const newRun = (id, number) => {
+  const l = one("SELECT * FROM lists WHERE id=?", id);
+  return Number(
+    run(
+      "INSERT INTO list_runs(list_id,number,created_at,name_snapshot,description_snapshot) VALUES(?,?,?,?,?)",
+      id,
+      number,
+      new Date().toISOString(),
+      l.name,
+      l.description,
+    ).lastInsertRowid,
+  );
+};
 const transaction = (fn) => {
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -266,51 +360,143 @@ app.post("/api/logout", (req, res) => {
   res.json({ ok: true });
 });
 app.get("/api/lists", (req, res) => {
-  const lists = all(
-    `SELECT l.*,(SELECT count(*) FROM points p WHERE p.list_id=l.id AND p.active=1) point_count,(SELECT count(DISTINCT f.point_id) FROM flushes f JOIN points p ON p.id=f.point_id WHERE p.list_id=l.id AND p.active=1) completed_count,(SELECT max(f.flushed_at) FROM flushes f JOIN points p ON p.id=f.point_id WHERE p.list_id=l.id) last_flush FROM lists l ${req.session.role === "employee" ? "WHERE l.id IN(SELECT list_id FROM assignments WHERE user_id=?)" : ""} ORDER BY l.id DESC`,
-    ...(req.session.role === "employee" ? [req.session.user_id] : []),
-  );
-  res.json(
-    lists.map((l) => ({
+  const result = [];
+  for (const l of all(
+    "SELECT * FROM lists WHERE deleted_at IS NULL ORDER BY id DESC",
+  )) {
+    const r = visibleRun(req.session, l.id);
+    if (!r) continue;
+    const historical = r.status === "published";
+    const total = historical
+      ? one("SELECT count(*) n FROM run_points WHERE run_id=?", r.id).n
+      : one("SELECT count(*) n FROM points WHERE list_id=? AND active=1", l.id)
+          .n;
+    const completed = historical
+      ? total
+      : one(
+          "SELECT count(*) n FROM points p WHERE p.list_id=? AND p.active=1 AND EXISTS(SELECT 1 FROM flushes f WHERE f.point_id=p.id AND f.run_id=?)",
+          l.id,
+          r.id,
+        ).n;
+    result.push({
       ...l,
-      assignees: all(
-        "SELECT u.id,u.name FROM users u JOIN assignments a ON u.id=a.user_id WHERE a.list_id=? AND u.active=1",
+      name: historical ? r.name_snapshot : l.name,
+      description: historical ? r.description_snapshot : l.description,
+      run_id: r.id,
+      run_number: r.number,
+      status: r.status,
+      point_count: total,
+      completed_count: completed,
+      last_flush: one(
+        "SELECT max(flushed_at) d FROM flushes WHERE run_id=?",
+        r.id,
+      ).d,
+      published_count: one(
+        "SELECT count(*) n FROM list_runs WHERE list_id=? AND status='published'",
         l.id,
+      ).n,
+      assignees:
+        req.session.role === "viewer"
+          ? []
+          : all(
+              "SELECT u.id,u.name FROM users u JOIN assignments a ON u.id=a.user_id WHERE a.list_id=? AND u.active=1",
+              l.id,
+            ),
+    });
+  }
+  if (req.session.role === "admin")
+    result.sort(
+      (a, b) =>
+        ({ review: 0, active: 1, published: 2 })[a.status] -
+          { review: 0, active: 1, published: 2 }[b.status] || b.id - a.id,
+    );
+  res.json(result);
+});
+app.get("/api/lists/:id/points", (req, res) => {
+  const id = Number(req.params.id),
+    r = visibleRun(req.session, id);
+  if (!r) return fail(res, 403, "Diese Liste ist nicht für dich freigegeben.");
+  const points =
+    r.status === "published"
+      ? all(
+          "SELECT point_id id,? list_id,code,address,target FROM run_points WHERE run_id=? ORDER BY code",
+          id,
+          r.id,
+        )
+      : all(
+          "SELECT * FROM points WHERE list_id=? AND active=1 ORDER BY code",
+          id,
+        );
+  res.json(
+    points.map((p) => ({
+      ...p,
+      completed: !!one(
+        "SELECT 1 FROM flushes WHERE run_id=? AND point_id=?",
+        r.id,
+        p.id,
       ),
+      last_flush:
+        r.status === "published"
+          ? one(
+              "SELECT max(flushed_at) d FROM flushes WHERE point_id=? AND run_id=?",
+              p.id,
+              r.id,
+            ).d
+          : one("SELECT max(flushed_at) d FROM flushes WHERE point_id=?", p.id)
+              .d,
+      last_volume:
+        one(
+          "SELECT volume FROM flushes WHERE run_id=? AND point_id=? ORDER BY id DESC LIMIT 1",
+          r.id,
+          p.id,
+        )?.volume ?? null,
     })),
   );
 });
-app.get("/api/lists/:id/points", (req, res) => {
+app.get("/api/lists/:id/runs", (req, res) => {
   const id = Number(req.params.id);
-  if (!canList(req.session, id))
-    return fail(res, 403, "Diese Liste ist dir nicht freigegeben.");
+  if (!visibleRun(req.session, id))
+    return fail(res, 403, "Diese Liste ist nicht für dich freigegeben.");
+  const filter =
+    req.session.role === "viewer"
+      ? " AND status='published'"
+      : req.session.role === "employee"
+        ? " AND status='active'"
+        : "";
   res.json(
     all(
-      "SELECT p.*,(SELECT max(flushed_at) FROM flushes f WHERE f.point_id=p.id) last_flush,(SELECT volume FROM flushes f WHERE f.point_id=p.id ORDER BY f.flushed_at DESC,f.id DESC LIMIT 1) last_volume FROM points p WHERE list_id=? AND active=1 ORDER BY code",
+      "SELECT id,number,status,created_at,completed_at,published_at FROM list_runs WHERE list_id=?" +
+        filter +
+        " ORDER BY number DESC",
       id,
     ),
   );
 });
 app.get("/api/flushes", (req, res) => {
-  const filters = [],
+  const filters = ["l.deleted_at IS NULL"],
     args = [];
+  if (req.session.role === "viewer") filters.push("r.status='published'");
   if (req.session.role === "employee") {
     filters.push(
-      "p.list_id IN(SELECT list_id FROM assignments WHERE user_id=?)",
+      "r.status='active' AND r.id=(SELECT id FROM list_runs WHERE list_id=r.list_id ORDER BY number DESC LIMIT 1) AND EXISTS(SELECT 1 FROM assignments a WHERE a.list_id=r.list_id AND a.user_id=?)",
     );
     args.push(req.session.user_id);
   }
   if (req.query.list) {
-    filters.push("p.list_id=?");
+    filters.push("r.list_id=?");
     args.push(Number(req.query.list));
   }
   if (req.query.point) {
     filters.push("f.point_id=?");
     args.push(Number(req.query.point));
   }
+  if (req.query.run) {
+    filters.push("r.id=?");
+    args.push(Number(req.query.run));
+  }
   res.json(
     all(
-      `SELECT f.*,p.list_id,f.code_snapshot code,f.address_snapshot address,f.target_snapshot target,f.employee_snapshot employee,l.name list_name FROM flushes f JOIN points p ON p.id=f.point_id JOIN lists l ON l.id=p.list_id ${filters.length ? "WHERE " + filters.join(" AND ") : ""} ORDER BY f.flushed_at DESC,f.id DESC`,
+      `SELECT f.*,r.list_id,r.number run_number,r.status run_status,f.code_snapshot code,f.address_snapshot address,f.target_snapshot target,f.employee_snapshot employee,r.name_snapshot list_name FROM flushes f JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE ${filters.join(" AND ")} ORDER BY f.flushed_at DESC,f.id DESC`,
       ...args,
     ),
   );
@@ -319,23 +505,24 @@ app.post("/api/points/:id/flushes", (req, res) => {
   if (!["admin", "employee"].includes(req.session.role))
     return fail(res, 403, "Betrachter können keine Spülungen dokumentieren.");
   const p = one(
-    "SELECT * FROM points WHERE id=? AND active=1",
+    "SELECT p.* FROM points p JOIN lists l ON l.id=p.list_id WHERE p.id=? AND p.active=1 AND l.deleted_at IS NULL",
     Number(req.params.id),
   );
   if (!p) return fail(res, 404, "Spülpunkt nicht gefunden.");
-  if (
-    !one(
-      "SELECT 1 FROM assignments WHERE list_id=? AND user_id=?",
-      p.list_id,
-      req.session.user_id,
-    )
-  )
+  const r = currentRun(p.list_id);
+  if (!assigned(req.session.user_id, p.list_id))
     return fail(res, 403, "Diese Liste ist dir nicht freigegeben.");
+  if (r?.status !== "active")
+    return fail(
+      res,
+      409,
+      "Dieser Durchgang ist abgeschlossen und wird von der Administration geprüft.",
+    );
   const b = req.body;
-  for (const k of ["temperature_before", "temperature_after", "volume"])
-    if (typeof b[k] !== "number" || !Number.isFinite(b[k]))
-      return fail(res, 400, "Bitte alle Messwerte als Zahl eingeben.");
   if (
+    ["temperature_before", "temperature_after", "volume"].some(
+      (k) => typeof b[k] !== "number" || !Number.isFinite(b[k]),
+    ) ||
     b.temperature_before < 0 ||
     b.temperature_before > 100 ||
     b.temperature_after < 0 ||
@@ -349,22 +536,116 @@ app.post("/api/points/:id/flushes", (req, res) => {
       400,
       "Temperaturen: 0–100 °C; Menge: größer 0 bis 1.000.000 m³; Trübung: Ja oder Nein.",
     );
-  const result = run(
-    "INSERT INTO flushes(point_id,user_id,temperature_before,temperature_after,volume,turbidity,flushed_at,source,code_snapshot,address_snapshot,target_snapshot,employee_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-    p.id,
-    req.session.user_id,
-    b.temperature_before,
-    b.temperature_after,
-    b.volume,
-    b.turbidity ? 1 : 0,
-    new Date().toISOString(),
-    "manual",
-    p.code,
-    p.address,
-    p.target,
-    req.session.name,
+  if (one("SELECT 1 FROM flushes WHERE run_id=? AND point_id=?", r.id, p.id))
+    return fail(
+      res,
+      409,
+      "Dieser Spülpunkt wurde in diesem Durchgang bereits bearbeitet.",
+    );
+  const result = transaction(() => {
+    const inserted = run(
+      "INSERT INTO flushes(point_id,user_id,temperature_before,temperature_after,volume,turbidity,flushed_at,source,code_snapshot,address_snapshot,target_snapshot,employee_snapshot,run_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      p.id,
+      req.session.user_id,
+      b.temperature_before,
+      b.temperature_after,
+      b.volume,
+      b.turbidity ? 1 : 0,
+      new Date().toISOString(),
+      "manual",
+      p.code,
+      p.address,
+      p.target,
+      req.session.name,
+      r.id,
+    );
+    finishIfComplete(p.list_id);
+    return inserted;
+  });
+  res.status(201).json({
+    id: Number(result.lastInsertRowid),
+    status: currentRun(p.list_id).status,
+  });
+});
+app.post("/api/lists/:id/publish", admin, (req, res) => {
+  const id = Number(req.params.id),
+    l = one("SELECT * FROM lists WHERE id=? AND deleted_at IS NULL", id),
+    r = currentRun(id);
+  if (!l) return fail(res, 404, "Liste nicht gefunden.");
+  if (r?.status !== "review")
+    return fail(
+      res,
+      409,
+      "Nur vollständig bearbeitete Durchgänge können gespeichert und freigegeben werden.",
+    );
+  transaction(() => {
+    run(
+      "INSERT INTO run_points(run_id,point_id,code,address,target) SELECT ?,id,code,address,target FROM points WHERE list_id=? AND active=1",
+      r.id,
+      id,
+    );
+    run(
+      "UPDATE list_runs SET status='published',published_at=?,name_snapshot=?,description_snapshot=? WHERE id=?",
+      new Date().toISOString(),
+      l.name,
+      l.description,
+      r.id,
+    );
+  });
+  res.json({ ok: true });
+});
+const validAssignees = (ids) =>
+  Array.isArray(ids) &&
+  ids.every(
+    (x) =>
+      Number.isInteger(x) &&
+      !!one(
+        "SELECT 1 FROM users WHERE id=? AND role IN ('admin','employee') AND active=1",
+        x,
+      ),
   );
-  res.status(201).json({ id: Number(result.lastInsertRowid) });
+app.post("/api/lists/:id/restart", admin, (req, res) => {
+  const id = Number(req.params.id),
+    r = currentRun(id),
+    ids = req.body.user_ids;
+  if (!one("SELECT 1 FROM lists WHERE id=? AND deleted_at IS NULL", id))
+    return fail(res, 404, "Liste nicht gefunden.");
+  if (r?.status !== "published")
+    return fail(
+      res,
+      409,
+      "Speichere den abgeschlossenen Durchgang zuerst und gib ihn für Betrachter frei.",
+    );
+  if (!validAssignees(ids) || ids.length === 0)
+    return fail(
+      res,
+      400,
+      "Wähle mindestens eine aktive Person aus Administration oder Mitarbeitern.",
+    );
+  const runId = transaction(() => {
+    const runId = newRun(id, r.number + 1);
+    run("DELETE FROM assignments WHERE list_id=?", id);
+    for (const uid of new Set(ids))
+      run("INSERT INTO assignments VALUES(?,?)", id, uid);
+    return runId;
+  });
+  res.status(201).json({ id: runId });
+});
+app.delete("/api/lists/:id", admin, (req, res) => {
+  const id = Number(req.params.id),
+    l = one("SELECT * FROM lists WHERE id=? AND deleted_at IS NULL", id);
+  if (!l) return fail(res, 404, "Liste nicht gefunden.");
+  if (req.body.confirm_name !== l.name)
+    return fail(res, 400, "Bitte bestätige den exakten Listennamen.");
+  transaction(() => {
+    run(
+      "UPDATE lists SET deleted_at=? WHERE id=?",
+      new Date().toISOString(),
+      id,
+    );
+    run("DELETE FROM assignments WHERE list_id=?", id);
+  });
+  res.json({ ok: true });
 });
 app.post("/api/lists", admin, (req, res) => {
   if (
@@ -377,16 +658,22 @@ app.post("/api/lists", admin, (req, res) => {
       400,
       "Listenname erforderlich, Beschreibung maximal 500 Zeichen.",
     );
-  const r = run(
-    "INSERT INTO lists(name,description) VALUES(?,?)",
-    req.body.name.trim(),
-    req.body.description || "",
-  );
-  res.status(201).json({ id: Number(r.lastInsertRowid) });
+  const id = transaction(() => {
+    const id = Number(
+      run(
+        "INSERT INTO lists(name,description) VALUES(?,?)",
+        req.body.name.trim(),
+        req.body.description || "",
+      ).lastInsertRowid,
+    );
+    newRun(id, 1);
+    return id;
+  });
+  res.status(201).json({ id });
 });
 app.put("/api/lists/:id", admin, (req, res) => {
   const id = Number(req.params.id);
-  if (!one("SELECT 1 FROM lists WHERE id=?", id))
+  if (!one("SELECT 1 FROM lists WHERE id=? AND deleted_at IS NULL", id))
     return fail(res, 404, "Liste nicht gefunden.");
   if (
     !text(req.body.name, 100) ||
@@ -409,19 +696,15 @@ app.put("/api/lists/:id", admin, (req, res) => {
 app.put("/api/lists/:id/assignments", admin, (req, res) => {
   const id = Number(req.params.id),
     ids = req.body.user_ids;
-  if (!one("SELECT 1 FROM lists WHERE id=?", id))
+  if (!one("SELECT 1 FROM lists WHERE id=? AND deleted_at IS NULL", id))
     return fail(res, 404, "Liste nicht gefunden.");
-  if (
-    !Array.isArray(ids) ||
-    ids.some(
-      (x) =>
-        !Number.isInteger(x) ||
-        !one(
-          "SELECT 1 FROM users WHERE id=? AND role IN ('admin','employee') AND active=1",
-          x,
-        ),
-    )
-  )
+  if (currentRun(id)?.status !== "active")
+    return fail(
+      res,
+      409,
+      "Freigaben können nur im aktiven Durchgang geändert werden.",
+    );
+  if (!validAssignees(ids))
     return fail(
       res,
       400,
@@ -442,7 +725,7 @@ const pointValid = (b) =>
   b.target > 0 &&
   b.target <= 1000000 &&
   Number.isInteger(b.list_id) &&
-  !!one("SELECT 1 FROM lists WHERE id=?", b.list_id);
+  !!one("SELECT 1 FROM lists WHERE id=? AND deleted_at IS NULL", b.list_id);
 app.post("/api/points", admin, (req, res) => {
   const b = req.body;
   if (!pointValid(b))
@@ -450,6 +733,12 @@ app.post("/api/points", admin, (req, res) => {
       res,
       400,
       "ID, Adresse, Liste und positive Sollmenge bis 1.000.000 m³ erforderlich.",
+    );
+  if (currentRun(b.list_id)?.status !== "active")
+    return fail(
+      res,
+      409,
+      "Spülpunkte können nur im aktiven Durchgang angelegt werden.",
     );
   const r = run(
     "INSERT INTO points(list_id,code,address,target) VALUES(?,?,?,?)",
@@ -467,6 +756,29 @@ app.put("/api/points/:id", admin, (req, res) => {
     return fail(res, 400, "Bitte gültige Spülpunktdaten eingeben.");
   if (!one("SELECT 1 FROM points WHERE id=?", id))
     return fail(res, 404, "Spülpunkt nicht gefunden.");
+  const original = one("SELECT * FROM points WHERE id=?", id),
+    originalRun = currentRun(original.list_id);
+  if (
+    originalRun?.status !== "active" ||
+    currentRun(b.list_id)?.status !== "active"
+  )
+    return fail(
+      res,
+      409,
+      "Spülpunkte können nur im aktiven Durchgang bearbeitet werden.",
+    );
+  if (
+    one(
+      "SELECT 1 FROM flushes WHERE point_id=? AND run_id=?",
+      id,
+      originalRun.id,
+    )
+  )
+    return fail(
+      res,
+      409,
+      "Bereits bearbeitete Spülpunkte bleiben bis zum nächsten Durchgang unverändert.",
+    );
   run(
     "UPDATE points SET list_id=?,code=?,address=?,target=? WHERE id=?",
     b.list_id,
@@ -475,6 +787,7 @@ app.put("/api/points/:id", admin, (req, res) => {
     b.target,
     id,
   );
+  finishIfComplete(original.list_id);
   res.json({ ok: true });
 });
 app.get("/api/users", admin, (req, res) =>
@@ -606,12 +919,36 @@ if (process.env.DEMO_MODE === "true" && !one("SELECT 1 FROM users LIMIT 1")) {
     }
   });
 }
+// Migrate existing measurements once, including demo data; never publish old records implicitly.
+transaction(() => {
+  for (const l of all("SELECT * FROM lists")) {
+    let r = currentRun(l.id);
+    if (!r) {
+      newRun(l.id, 1);
+      r = currentRun(l.id);
+    }
+    run(
+      "UPDATE flushes SET run_id=? WHERE run_id IS NULL AND point_id IN(SELECT id FROM points WHERE list_id=?)",
+      r.id,
+      l.id,
+    );
+    finishIfComplete(l.id);
+  }
+});
 const port = Number(process.env.PORT || 3000);
-const server = app.listen(port, process.env.HOST || "0.0.0.0", () =>
+const server = app.listen(port, process.env.HOST || "0.0.0.0");
+server.on("listening", () =>
   console.log(
-    `Spülplan läuft auf Port ${server.address().port}${process.env.DEMO_MODE === "true" ? " (Demo mit Beispieldaten)" : ""}`,
+    `SpülPilot läuft auf Port ${server.address().port}${process.env.DEMO_MODE === "true" ? " (Demo mit Beispieldaten)" : ""}`,
   ),
 );
+server.on("error", (error) => {
+  console.error(
+    `SpülPilot konnte nicht starten (${error.code || "Fehler"}). Prüfe HOST und PORT; ein belegter Port darf nicht überschrieben werden.`,
+  );
+  db.close();
+  process.exitCode = 1;
+});
 for (const signal of ["SIGTERM", "SIGINT"])
   process.on(signal, () =>
     server.close(() => {

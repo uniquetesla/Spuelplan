@@ -1685,3 +1685,43 @@ textarea::placeholder {
   margin-bottom: 12px;
   padding-left: 4px;
 }
+
+.brand {
+  font-size: 23px;
+}
+.brand small {
+  font-size: 8px;
+  letter-spacing: 1.1px;
+}
+.lifecycle-strip {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: #7b8d9d;
+  margin-bottom: 18px;
+}
+.delete-link {
+  color: #b75d61;
+}
+.review-notice {
+  background: #fff7e9;
+  color: #987028;
+}
+@media (max-width: 620px) {
+  .page-heading .button {
+    white-space: normal;
+    text-align: center;
+  }
+  .section-head .actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .toolbar select {
+    width: 100%;
+  }
+  .lifecycle-strip {
+    gap: 10px;
+  }
+}
