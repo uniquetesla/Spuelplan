@@ -329,12 +329,22 @@ const assigned = (userId, listId) =>
     listId,
     userId,
   );
-const visibleRun = (session, id) => {
+const visibleRun = (session, id, runId = null) => {
   if (!one("SELECT 1 FROM lists WHERE id=? AND deleted_at IS NULL", id))
     return null;
-  const r = session.role === "viewer" ? publishedRun(id) : currentRun(id);
+  const r =
+    runId !== null
+      ? one(
+          "SELECT * FROM list_runs WHERE id=? AND list_id=?",
+          Number(runId),
+          id,
+        )
+      : session.role === "viewer"
+        ? publishedRun(id)
+        : currentRun(id);
   if (
     !r ||
+    (session.role === "viewer" && r.status !== "published") ||
     (session.role === "employee" &&
       (r.status !== "active" || !assigned(session.user_id, id)))
   )
@@ -349,12 +359,14 @@ const finishIfComplete = (id) => {
     r.id,
     id,
   );
-  if (counts.total > 0 && counts.total === counts.completed)
+  if (counts.total > 0 && counts.total === counts.completed) {
     run(
       "UPDATE list_runs SET status='review',completed_at=? WHERE id=?",
       new Date().toISOString(),
       r.id,
     );
+    run("DELETE FROM assignments WHERE list_id=?", id);
+  }
 };
 const newRun = (id, number) => {
   const l = one("SELECT * FROM lists WHERE id=?", id);
@@ -605,46 +617,62 @@ app.get("/api/lists", (req, res) => {
   for (const l of all(
     "SELECT * FROM lists WHERE deleted_at IS NULL ORDER BY id DESC",
   )) {
-    const r = visibleRun(req.session, l.id);
-    if (!r) continue;
-    const historical = r.status === "published";
-    const total = historical
-      ? one("SELECT count(*) n FROM run_points WHERE run_id=?", r.id).n
-      : one("SELECT count(*) n FROM points WHERE list_id=? AND active=1", l.id)
-          .n;
-    const completed = historical
-      ? total
-      : one(
-          "SELECT count(*) n FROM points p WHERE p.list_id=? AND p.active=1 AND EXISTS(SELECT 1 FROM flushes f WHERE f.point_id=p.id AND f.run_id=?)",
-          l.id,
+    const runs =
+      req.session.role === "viewer"
+        ? all(
+            "SELECT * FROM list_runs WHERE list_id=? AND status='published' ORDER BY published_at DESC,id DESC",
+            l.id,
+          )
+        : [visibleRun(req.session, l.id)].filter(Boolean);
+    for (const r of runs) {
+      const historical = r.status === "published";
+      const total = historical
+        ? one("SELECT count(*) n FROM run_points WHERE run_id=?", r.id).n
+        : one(
+            "SELECT count(*) n FROM points WHERE list_id=? AND active=1",
+            l.id,
+          ).n;
+      const completed = historical
+        ? total
+        : one(
+            "SELECT count(*) n FROM points p WHERE p.list_id=? AND p.active=1 AND EXISTS(SELECT 1 FROM flushes f WHERE f.point_id=p.id AND f.run_id=?)",
+            l.id,
+            r.id,
+          ).n;
+      result.push({
+        ...l,
+        name: historical ? r.name_snapshot : l.name,
+        description: historical ? r.description_snapshot : l.description,
+        run_id: r.id,
+        run_number: r.number,
+        status: r.status,
+        published_at: r.published_at,
+        completed_at: r.completed_at,
+        point_count: total,
+        completed_count: completed,
+        last_flush: one(
+          "SELECT max(flushed_at) d FROM flushes WHERE run_id=?",
           r.id,
-        ).n;
-    result.push({
-      ...l,
-      name: historical ? r.name_snapshot : l.name,
-      description: historical ? r.description_snapshot : l.description,
-      run_id: r.id,
-      run_number: r.number,
-      status: r.status,
-      point_count: total,
-      completed_count: completed,
-      last_flush: one(
-        "SELECT max(flushed_at) d FROM flushes WHERE run_id=?",
-        r.id,
-      ).d,
-      published_count: one(
-        "SELECT count(*) n FROM list_runs WHERE list_id=? AND status='published'",
-        l.id,
-      ).n,
-      assignees:
-        req.session.role === "viewer"
-          ? []
-          : all(
-              "SELECT u.id,u.name FROM users u JOIN assignments a ON u.id=a.user_id WHERE a.list_id=? AND u.active=1",
-              l.id,
-            ),
-    });
+        ).d,
+        published_count: one(
+          "SELECT count(*) n FROM list_runs WHERE list_id=? AND status='published'",
+          l.id,
+        ).n,
+        assignees:
+          req.session.role === "viewer"
+            ? []
+            : all(
+                "SELECT u.id,u.name FROM users u JOIN assignments a ON u.id=a.user_id WHERE a.list_id=? AND u.active=1",
+                l.id,
+              ),
+      });
+    }
   }
+  if (req.session.role === "viewer")
+    result.sort(
+      (a, b) =>
+        b.published_at.localeCompare(a.published_at) || b.run_id - a.run_id,
+    );
   if (req.session.role === "admin")
     result.sort(
       (a, b) =>
@@ -655,7 +683,7 @@ app.get("/api/lists", (req, res) => {
 });
 app.get("/api/lists/:id/points", (req, res) => {
   const id = Number(req.params.id),
-    r = visibleRun(req.session, id);
+    r = visibleRun(req.session, id, req.query.run ?? null);
   if (!r) return fail(res, 403, "Diese Liste ist nicht für dich freigegeben.");
   const points =
     r.status === "published"
@@ -995,6 +1023,7 @@ app.post("/api/lists/:id/publish", admin, (req, res) => {
       l.description,
       r.id,
     );
+    run("DELETE FROM assignments WHERE list_id=?", id);
   });
   res.json({ ok: true });
 });
@@ -1345,6 +1374,8 @@ transaction(() => {
       l.id,
     );
     finishIfComplete(l.id);
+    if (currentRun(l.id)?.status !== "active")
+      run("DELETE FROM assignments WHERE list_id=?", l.id);
   }
 });
 const port = Number(process.env.PORT || 3000);
