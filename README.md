@@ -132,3 +132,5 @@ Beim Start einer neuen BLE-Messung fragt SpülPilot vor dem Abbruch eines laufen
 Nach dem letzten offenen Spülpunkt wechselt der Durchlauf zur Prüfung. Sämtliche Bearbeitungsfreigaben für Mitarbeiter und Administration werden entfernt. Erst die Administration veröffentlicht den geprüften Durchlauf zur Betrachtung.
 
 Betrachter sehen jeden veröffentlichten Durchlauf als eigene Spülliste mit dem Datum der Freigabe zur Betrachtung. Zwei Durchläufe derselben Liste erscheinen als zwei Einträge. Beim Öffnen werden ausschließlich die Messungen dieses Durchlaufs mit ihren ursprünglichen Messdaten angezeigt (Datum ohne Uhrzeit). Die Liste lässt sich direkt ausdrucken. Gespeicherte Durchläufe bleiben beim Neustart erhalten; für den neuen Durchlauf müssen berechtigte Personen neu ausgewählt werden.
+
+Unter **Spülprotokolle** wird jeder verfügbare Durchlauf als eigene Spülliste dargestellt. Nach Auswahl erscheinen ausschließlich dessen Messungen. Der Druckbutton ist erst in dieser Detailansicht vorhanden; der Ausdruck enthält nur die ausgewählte Liste und den ausgewählten Durchlauf.

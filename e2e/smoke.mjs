@@ -257,8 +257,9 @@ try {
   await click("Protokolle");
   await expect(heading("Spülprotokolle")).toBeVisible();
   await expect(page.locator("tbody tr")).toHaveCount(2);
-  await page.getByLabel("Durchgang filtern").selectOption({ index: 1 });
-  await expect(page.locator("tbody tr")).toHaveCount(2);
+  await expect(
+    page.getByRole("button", { name: "Liste drucken", exact: true }),
+  ).toBeVisible();
   console.log(
     "PASS: Neuer Durchgang setzt Bearbeitungsstand zurück; veröffentlichte Historie bleibt unverändert sichtbar.",
   );
@@ -277,17 +278,26 @@ try {
   await closed();
   await logout();
   await login("betrachter@spuelplan.local");
-  await page.goto(base + "/#/lists");
+  await page.goto(base + "/#/reports");
+  await expect(heading("Spülprotokolle")).toBeVisible();
   const archiveCards = page
     .locator(".list-card")
     .filter({ hasText: "UI-Testgebiet" });
+  await expect(archiveCards).toHaveCount(2);
+  await expect(page.locator("tbody tr")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Liste drucken", exact: true }),
+  ).toHaveCount(0);
+  await page.getByLabel("Spülprotokolle suchen").fill("kein Treffer");
+  await expect(archiveCards).toHaveCount(0);
+  await page.getByLabel("Spülprotokolle suchen").fill("UI-Testgebiet");
   await expect(archiveCards).toHaveCount(2);
   for (let index = 0; index < 2; index++) {
     await expect(archiveCards.nth(index)).toContainText(
       "Zur Betrachtung freigegeben am",
     );
     await archiveCards.nth(index).click();
-    await expect(heading("UI-Testgebiet")).toBeVisible();
+    await expect(heading("Spülprotokolle")).toBeVisible();
     await expect(page.locator("tbody tr")).toHaveCount(2);
     await expect(page.locator(".subtitle")).toContainText(
       `Durchgang ${2 - index}`,
@@ -295,7 +305,18 @@ try {
     await expect(
       page.locator("tbody tr").filter({ hasText: "UI-001" }),
     ).toContainText(index === 0 ? "2,8" : "2,6");
-    await page.goto(base + "/#/lists");
+    await page.emulateMedia({ media: "print" });
+    await expect(page.locator("tbody tr")).toHaveCount(2);
+    await expect(page.locator(".print-heading")).toContainText(
+      `Durchgang ${2 - index}`,
+    );
+    await expect(page.locator(".sidebar")).not.toBeVisible();
+    await page.pdf({
+      path: join(directory, `durchgang-${2 - index}.pdf`),
+      landscape: true,
+    });
+    await page.emulateMedia({ media: "screen" });
+    await page.goto(base + "/#/reports");
   }
   await page.screenshot({
     path: "/tmp/spuelpilot-archive.png",

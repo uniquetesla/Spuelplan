@@ -295,24 +295,78 @@ function pointTable(rows) {
     );
   return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th><th>Sollmenge</th><th>Letzte Spülung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((p) => `<tr class="${notes.some((n) => n.point_id === p.id) ? "point-issue" : ""}"><td><span class="point-id">${esc(p.code)}</span></td><td><strong>${esc(p.address)}</strong></td><td>${number(p.target)} m³</td><td>${p.last_flush ? date(p.last_flush) : "—"}</td><td><span class="badge ${p.completed ? "green" : ""}">${p.completed ? "Bearbeitet" : "Noch offen"}</span></td><td><div class="actions">${canDocument() && !p.completed ? `<button class="table-action" data-action="flush" data-id="${p.id}">Spülung erfassen ${icon("arrow")}</button>` : ""}${isAdmin() || user.role === "viewer" ? `<button class="table-action" data-action="point-detail" data-id="${p.id}">${isAdmin() && currentList.status === "active" && !p.completed ? "Bearbeiten" : "Details"}${icon(isAdmin() ? "edit" : "chevron")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>`;
 }
-function reportsPage() {
-  const selected =
-    new URLSearchParams(location.hash.split("?")[1] || "").get("list") || "";
-  const selectedRun =
-    new URLSearchParams(location.hash.split("?")[1] || "").get("run") || "";
-  const filtered = flushes.filter(
-    (f) =>
-      (!selected || String(f.list_id) === selected) &&
-      (!selectedRun || String(f.run_id) === selectedRun),
+function reportRuns() {
+  const groups = new Map();
+  for (const f of flushes) {
+    if (!groups.has(f.run_id))
+      groups.set(f.run_id, {
+        id: f.run_id,
+        listId: f.list_id,
+        name: f.list_name,
+        number: f.run_number,
+        status: f.run_status,
+        publishedAt: f.run_published_at,
+        rows: [],
+      });
+    groups.get(f.run_id).rows.push(f);
+  }
+  return [...groups.values()].sort(
+    (a, b) =>
+      (b.publishedAt || "").localeCompare(a.publishedAt || "") || b.id - a.id,
   );
+}
+function reportCards(runs) {
   return (
+    runs
+      .map(
+        (r) =>
+          `<a class="list-card" href="#/reports?list=${r.listId}&run=${r.id}"><div class="list-card-top"><div class="folder">${icon("folder")}</div>${statusBadge({ status: r.status })}</div><h3>${esc(r.name)}</h3><p>${r.publishedAt ? `Zur Betrachtung freigegeben am <strong>${date(r.publishedAt)}</strong>` : "Noch nicht zur Betrachtung freigegeben"}</p><div class="card-bottom"><span>Durchgang ${r.number} · ${r.rows.length} Messungen</span>${icon("arrow")}</div></a>`,
+      )
+      .join("") ||
+    empty(
+      "Keine Spülprotokolle",
+      "Hier erscheinen die für dich verfügbaren Spüllisten mit ihren Messungen.",
+    )
+  );
+}
+function reportsPage() {
+  const params = new URLSearchParams(location.hash.split("?")[1] || ""),
+    selectedRun = params.get("run"),
+    selectedList = params.get("list"),
+    runs = reportRuns(),
+    run = runs.find(
+      (r) =>
+        String(r.id) === selectedRun &&
+        (!selectedList || String(r.listId) === selectedList),
+    );
+  if (!selectedRun)
+    return (
+      heading(
+        "Spülprotokolle",
+        "Wähle eine Spülliste aus. Jeder Durchlauf enthält seine eigenen Messwerte und seinen eigenen Ausdruck.",
+        "",
+        "DOKUMENTATION & NACHWEISE",
+      ) +
+      `<div class="print-heading"><h1>Spülprotokolle</h1><p>Bitte zuerst eine Spülliste zum Drucken auswählen.</p></div><div class="toolbar"><div class="search">${icon("search")}<input id="report-search" type="search" placeholder="Spülliste suchen …" aria-label="Spülprotokolle suchen"></div></div><div class="list-grid no-print" id="report-cards">${reportCards(runs.filter((r) => !selectedList || String(r.listId) === selectedList))}</div>`
+    );
+  if (!run)
+    return (
+      `<a class="back" href="#/reports">${icon("back")}Zurück zu den Spülprotokollen</a>` +
+      empty(
+        "Spülprotokoll nicht gefunden",
+        "Dieser Durchlauf ist nicht für dich verfügbar.",
+      )
+    );
+  const subtitle = `${run.publishedAt ? "Zur Betrachtung freigegeben am " + date(run.publishedAt) : statusName[run.status]} · Durchgang ${run.number}`;
+  return (
+    `<a class="back" href="#/reports">${icon("back")}Zurück zu den Spülprotokollen</a>` +
     heading(
       "Spülprotokolle",
-      "Alle Messwerte nachvollziehbar dokumentiert und bereit für den Ausdruck.",
+      esc(`${run.name} · ${subtitle}`),
       button("Liste drucken", "print", "print", true),
       "DOKUMENTATION & NACHWEISE",
     ) +
-    `<div class="print-heading"><h1>Spülprotokoll${selected ? " · " + esc(lists.find((l) => String(l.id) === selected)?.name || "") : ""}</h1><p>Erstellt am ${date(new Date().toISOString())} · ${esc(user.name)} · ${filtered.length} Spülungen</p></div><div class="toolbar"><div class="search">${icon("search")}<input id="report-search" type="search" placeholder="ID, Adresse oder Mitarbeiter suchen …" aria-label="Protokolle suchen"></div><select id="report-list" aria-label="Spülliste filtern"><option value="">Alle Spüllisten</option>${[...new Map(lists.map((l) => [l.id, l])).values()].map((l) => `<option value="${l.id}" ${String(l.id) === selected ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select><select id="report-run" aria-label="Durchgang filtern"><option value="">Alle Durchgänge</option>${[...new Map(flushes.map((f) => [f.run_id, f])).values()].map((f) => `<option value="${f.run_id}" ${String(f.run_id) === selectedRun ? "selected" : ""}>${esc(f.list_name)} · Durchgang ${f.run_number}</option>`).join("")}</select></div><section class="panel" id="report-results">${reportTable(filtered)}</section>`
+    `<div class="print-heading"><h1>${esc(run.name)} · Durchgang ${run.number}</h1><p>${esc(subtitle)} · ${run.rows.length} Messungen</p></div><section class="panel" id="report-results">${reportTable(run.rows)}</section>`
   );
 }
 function notesPage() {
@@ -440,31 +494,22 @@ async function render() {
       };
     } else if (section === "reports") {
       layout(reportsPage(), "reports");
-      const filter = () => {
-        const id = document.querySelector("#report-list").value,
-          q = document.querySelector("#report-search").value.toLowerCase();
-        const rows = flushes.filter(
-          (f) =>
-            (!id || String(f.list_id) === id) &&
-            (!document.querySelector("#report-run").value ||
-              String(f.run_id) ===
-                document.querySelector("#report-run").value) &&
-            `${f.code} ${f.address} ${f.employee}`.toLowerCase().includes(q),
-        );
-        document.querySelector("#report-results").innerHTML = reportTable(rows);
-        document.querySelector(".print-heading p").textContent =
-          `Erstellt am ${date(new Date().toISOString())} · ${user.name} · ${rows.length} Spülungen${document.querySelector("#report-run").selectedIndex > 0 ? " · " + document.querySelector("#report-run").selectedOptions[0].textContent : ""}${q ? " · Suche: " + q : ""}`;
-        document.querySelector(".print-heading h1").textContent =
-          "Spülprotokoll" +
-          (id ? " · " + lists.find((l) => String(l.id) === id)?.name : "");
-      };
-      document.querySelector("#report-search").oninput = filter;
-      document.querySelector("#report-list").onchange = () => {
-        document.querySelector("#report-run").value = "";
-        filter();
-      };
-      document.querySelector("#report-run").onchange = filter;
-      filter();
+      const search = document.querySelector("#report-search");
+      if (search)
+        search.oninput = () => {
+          const listId = new URLSearchParams(
+            location.hash.split("?")[1] || "",
+          ).get("list");
+          document.querySelector("#report-cards").innerHTML = reportCards(
+            reportRuns().filter(
+              (r) =>
+                (!listId || String(r.listId) === listId) &&
+                `${r.name} ${r.number} ${r.publishedAt ? date(r.publishedAt) : ""}`
+                  .toLowerCase()
+                  .includes(search.value.toLowerCase()),
+            ),
+          );
+        };
     } else if (section === "devices") {
       layout(devicesPage(), "devices");
     } else {
