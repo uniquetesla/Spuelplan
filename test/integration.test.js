@@ -1055,3 +1055,160 @@ test("ESP32-Messungen erhalten dauerhafte, eigene Speicherbestätigungen und ide
   );
   db.close();
 });
+
+test("Interne Bemerkungen werden quittiert und niemals an Betrachter ausgeliefert", async () => {
+  const employeeSession = await login("employee@example.de"),
+    viewerSession = await login("other@example.de");
+  const l = await request("/lists", {
+      session: admin,
+      body: { name: "Interne Hinweise" },
+    }),
+    listId = l.data.id;
+  const p = await request("/points", {
+    session: admin,
+    body: {
+      list_id: listId,
+      code: "SP-NOTE",
+      address: "Heppenheim",
+      target: 2,
+    },
+  });
+  await request(`/lists/${listId}/assignments`, {
+    session: admin,
+    method: "PUT",
+    body: { user_ids: [employeeSession.user.id] },
+  });
+  const requestId = crypto.randomUUID(),
+    content = "Hydrant undicht. Interne Telefonnummer: TEST-PRIVAT";
+  const data = { ...values, note: content, request_id: requestId };
+  assert.equal(
+    (
+      await request(`/points/${p.data.id}/flushes`, {
+        session: employeeSession,
+        body: { ...data, note: "x".repeat(2001) },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(`/points/${p.data.id}/flushes`, {
+        session: employeeSession,
+        body: data,
+      })
+    ).status,
+    201,
+  );
+  const own = (
+    await request("/internal-notes", { session: employeeSession })
+  ).data.find((n) => n.content === content);
+  assert.ok(own);
+  assert.equal(own.point_id, p.data.id);
+  assert.ok(
+    (await request("/internal-notes", { session: admin })).data.some(
+      (n) => n.id === own.id,
+    ),
+  );
+  const outsider = await request("/users", {
+    session: admin,
+    body: {
+      name: "Unbeteiligter Mitarbeiter",
+      email: "unbeteiligt@example.de",
+      role: "employee",
+      password,
+    },
+  });
+  assert.equal(outsider.status, 201);
+  const otherEmployee = await login("unbeteiligt@example.de");
+  assert.equal(
+    (await request("/internal-notes", { session: otherEmployee })).data.some(
+      (n) => n.id === own.id,
+    ),
+    false,
+  );
+  assert.equal(
+    (
+      await request("/internal-notes/acknowledge", {
+        session: otherEmployee,
+        body: { ids: [own.id] },
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (await request("/internal-notes", { session: viewerSession })).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request("/internal-notes/acknowledge", {
+        session: viewerSession,
+        body: { ids: [own.id] },
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (await request(`/lists/${listId}/publish`, { session: admin, body: {} }))
+      .status,
+    200,
+  );
+  const published = (await records(viewerSession)).data.find(
+    (r) => r.point_id === p.data.id,
+  );
+  assert.ok(published);
+  assert.equal("note" in published, false);
+  assert.equal("content" in published, false);
+  assert.equal(JSON.stringify(published).includes(content), false);
+  assert.equal(
+    (
+      await request(`/points/${p.data.id}/flushes`, {
+        session: employeeSession,
+        body: data,
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(`/points/${p.data.id}/flushes`, {
+        session: employeeSession,
+        body: { ...data, note: "Geändert" },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await request("/internal-notes/acknowledge", {
+        session: employeeSession,
+        csrf: false,
+        body: { ids: [own.id] },
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request("/internal-notes/acknowledge", {
+        session: employeeSession,
+        body: { ids: [own.id] },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await request("/internal-notes", { session: admin })).data.some(
+      (n) => n.id === own.id,
+    ),
+    false,
+  );
+  const db = new DatabaseSync(join(dir, "test.sqlite"));
+  const stored = db
+    .prepare("SELECT * FROM internal_notes WHERE id=?")
+    .get(own.id);
+  assert.equal(stored.content, content);
+  assert.equal(stored.acknowledged_by, employeeSession.user.id);
+  assert.ok(stored.acknowledged_at);
+  db.close();
+});

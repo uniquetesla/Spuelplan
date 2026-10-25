@@ -22,7 +22,7 @@ Nachrichten sind vollständige UTF-8-Strings ohne eckige Klammern und ohne Einhe
 | Richtung     | Nachricht                  | Bedeutung                                                             |
 | ------------ | -------------------------- | --------------------------------------------------------------------- |
 | Browser → RX | `SP-1024;2.50`             | Auftrag mit Spülpunkt-ID und Sollmenge in m³                          |
-| Browser → RX | `SP-1024;0`                | Laufende Messung abbrechen, nur mit bestätigter Firmware-Erweiterung  |
+| Browser → RX | `SP-1024;0`                | Laufende Messung abbrechen, Abbruch im vorhandenen Auftragsformat     |
 | Browser → RX | `STATUS`                   | Aktuellen Messzustand erfragen                                        |
 | Browser → RX | `GET`                      | Gespeichertes Ergebnis über TX Notify anfordern                       |
 | Browser → RX | `ACK;SP-1024`              | Bereits auf dem Server gespeichertes Ergebnis bestätigen              |
@@ -66,7 +66,7 @@ Web Bluetooth benötigt HTTPS und einen unterstützten Browser, beispielsweise C
 
 **Protokollerweiterung im vorhandenen Auftragsformat:** `Spülpunkt-ID;0` bedeutet ab jetzt „laufende Messung dieses Punkts abbrechen“. Eine reguläre Sollmenge bleibt immer größer null. Es wird kein `STOP`, `CANCEL` oder anderer neuer Befehl eingeführt. `ACK;ID` behält unverändert seine bisherige Bedeutung und wird weiterhin ausschließlich nach Serverspeicherung verwendet.
 
-Diese Sonderbedeutung war im bisherigen Profil **nicht definiert**. Sie muss in die ESP32-Firmware eingebaut werden, bevor die Funktion benutzt wird. Die Website bietet deshalb eine ausdrückliche Bestätigung **Firmware unterstützt Messabbruch über ID;0** pro Bluetooth-Verbindung. Ohne diese Bestätigung wird kein Nullmengen-Telegramm gesendet. Das ist keine automatische Erkennung der Firmwareversion.
+Diese Sonderbedeutung war im bisherigen Profil **nicht definiert**. Sie muss in die ESP32-Firmware eingebaut werden, bevor die Funktion benutzt wird. Die Website benötigt keinen zusätzlichen Firmware-Schalter mehr. Der Abbruch-Button ist bei laufendem, verbundenem Auftrag direkt bedienbar. Die Firmware muss weiterhin die beschriebene Nullmengen-Sonderbedeutung implementieren.
 
 Ablauf und Schutz gegen einen gleichzeitigen Messabschluss:
 
@@ -102,3 +102,7 @@ if (sollKubikmeter == 0.0) {
 ```
 
 Dies beendet ausschließlich die Messaufzeichnung. Ein Ventil oder der Wasserfluss wird damit **nicht** abgeschaltet. Bei Timeout oder Verbindungsverlust meldet die Website keinen erfolgreichen Abbruch; der laufende Auftrag bleibt bis zur erneuten Prüfung erhalten. Ein Hardwaretest mit dieser Firmwareerweiterung steht noch aus.
+
+### Neuer Auftrag während einer laufenden Messung
+
+Jeder Start eines neuen Auftrags fragt den aktuellen Status am ESP32 ab. Meldet dieser WAIT_FLOW, COUNTDOWN oder MEASURING, fragt die Website, ob die alte Messung abgebrochen werden soll. Bei Ablehnung bleibt die alte Messung unverändert. Bei Zustimmung wird zuerst der Abbruch bestätigt und danach der neue Auftrag gesendet. Ohne eindeutige Bestätigung oder bei READY wird kein neuer Auftrag übertragen. Für den Neustart desselben Punkts gibt es zusätzlich **Neue Messung starten**. Fertige oder bereits gespeicherte Ergebnisse müssen weiterhin zuerst gespeichert beziehungsweise bestätigt werden.

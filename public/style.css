@@ -1867,3 +1867,92 @@ input[readonly] {
 .ble-cancel .checkbox-row {
   background: white;
 }
+
+.internal-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 18px;
+  background: #fff0f0;
+  border: 1px solid #efcaca;
+  color: #ae4048;
+  border-radius: 9px;
+  font-size: 12px;
+  margin-bottom: 22px;
+}
+.issue-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 25px;
+}
+.issue-card {
+  background: #fff0f0;
+  border: 1px solid #edc5c8;
+  border-left: 4px solid #cf5961;
+  border-radius: 10px;
+  padding: 23px;
+}
+.issue-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.issue-card h2 {
+  font-size: 15px;
+  color: #84444c;
+}
+.issue-badge {
+  color: #ac4550;
+  background: #fbe0e3;
+}
+.issue-note {
+  padding: 17px 0;
+  border-bottom: 1px solid #efd2d5;
+  margin-bottom: 15px;
+}
+.issue-note p {
+  font-size: 13px;
+  line-height: 1.8;
+  color: #7d4a51;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.issue-note small {
+  display: block;
+  font-size: 10px;
+  margin-top: 10px;
+  color: #a77e84;
+}
+.field-hint {
+  font-size: 10px;
+  line-height: 1.7;
+  color: #8398a8;
+  display: block;
+  margin-top: 7px;
+}
+.nav .count.issue-count {
+  color: #b84c56;
+  background: #fff0f0;
+  border-color: #efc9ce;
+}
+@media (max-width: 800px) {
+  .issue-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media print {
+  .internal-alert,
+  .issue-grid {
+    display: none !important;
+  }
+}
+
+tr.point-issue,
+tr.point-issue:hover {
+  background: #fff0f0;
+}
+.ble-cancel .button {
+  margin: 0 8px 8px 0;
+}

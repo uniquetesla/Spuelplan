@@ -64,7 +64,7 @@ function fake({
         if (!dropAck) notify("STATUS;ACK_OK");
         return;
       }
-      if (text === "SP-1024;0") {
+      if (text.endsWith(";0")) {
         if (readyOnCancel) {
           state.frame = "SP-1024;2.500;12.45;9.82";
           state.status = "STATUS;READY;SP-1024";
@@ -79,8 +79,8 @@ function fake({
         if (!dropCancel) notify("STATUS;ACK_OK");
         return;
       }
-      assert.equal(text, "SP-1024;2.5");
-      state.status = "STATUS;WAIT_FLOW;SP-1024";
+      assert.match(text, /^SP-(1024|2000);(2.5|3)$/);
+      state.status = "STATUS;WAIT_FLOW;" + text.split(";")[0];
       state.frame = null;
       notify(state.status);
     },
@@ -180,7 +180,12 @@ test("BLE-Client sendet GET, übernimmt Notify-Werte und sendet ACK erst nach Se
   await f.client.connect();
   assert.equal(f.client.connected, true);
   assert.equal(await f.client.exchange(point, runId), null);
-  assert.deepEqual(f.state.commands, ["STATUS", "GET", "SP-1024;2.5"]);
+  assert.deepEqual(f.state.commands, [
+    "STATUS",
+    "STATUS",
+    "GET",
+    "SP-1024;2.5",
+  ]);
   await assert.rejects(f.client.exchange(point, runId), MeasurementNotReady);
   f.complete();
   const values = await f.client.exchange(point, runId);
@@ -212,7 +217,7 @@ test("Falsche IDs und fremde Serverbestätigungen löschen keine ESP32-Daten", a
   assert.throws(() => f.client.markSaved({ ...f.receipt(), user_id: 99 }));
   await assert.rejects(
     f.client.exchange({ ...point, id: 2, code: "SP-OTHER" }, runId),
-    /offen/,
+    /offen|Ergebnis/,
   );
   assert.equal(f.state.led, true);
 });
@@ -253,10 +258,7 @@ test("Gerätedaten werden weder durch einen neuen Auftrag noch durch Logout verw
   const f = fake();
   await f.client.connect();
   f.complete();
-  await assert.rejects(
-    f.client.exchange(point, runId),
-    /unbestätigtes Ergebnis/,
-  );
+  await assert.rejects(f.client.exchange(point, runId), /Ergebnis/);
   assert.equal(f.state.led, true);
   assert.equal(f.state.commands.includes("SP-1024;2.5"), false);
   const g = fake();
@@ -292,15 +294,12 @@ test("Eine verspätete HTTP-Speicherbestätigung bleibt nach Abmeldung für den 
   assert.equal(f.client.job, null);
 });
 
-test("Messabbruch verwendet ausschließlich ID;0 und bestehende Antworten; ältere Firmware bleibt gesperrt", async () => {
+test("Messabbruch verwendet ID;0 ohne Firmware-Schalter", async () => {
   for (const phase of ["WAIT_FLOW", "COUNTDOWN", "MEASURING"]) {
     const f = fake();
     await f.client.connect();
     await f.client.exchange(point, runId);
     f.state.status = `STATUS;${phase};SP-1024`;
-    await assert.rejects(f.client.cancelMeasurement(), /Firmware/);
-    assert.equal(f.state.commands.includes("SP-1024;0"), false);
-    f.client.cancelSupported = true;
     await f.client.cancelMeasurement();
     assert.equal(f.client.job, null);
     assert.equal(f.state.commands.at(-1), "SP-1024;0");
@@ -315,7 +314,6 @@ test("Abbruch schützt fertige Messungen, falsche IDs und den gleichzeitigen Abs
   const f = fake();
   await f.client.connect();
   await f.client.exchange(point, runId);
-  f.client.cancelSupported = true;
   f.complete();
   await assert.rejects(f.client.cancelMeasurement(), /abgeschlossen/);
   assert.equal(f.state.commands.includes("SP-1024;0"), false);
@@ -323,14 +321,12 @@ test("Abbruch schützt fertige Messungen, falsche IDs und den gleichzeitigen Abs
   const g = fake();
   await g.client.connect();
   await g.client.exchange(point, runId);
-  g.client.cancelSupported = true;
   g.state.status = "STATUS;MEASURING;SP-FREMD";
   await assert.rejects(g.client.cancelMeasurement(), /anderer/);
   assert.equal(g.state.commands.includes("SP-1024;0"), false);
   const h = fake({ readyOnCancel: true });
   await h.client.connect();
   await h.client.exchange(point, runId);
-  h.client.cancelSupported = true;
   await assert.rejects(h.client.cancelMeasurement(), /nicht bestätigt/);
   assert.equal(h.state.led, true);
   assert.equal(h.client.job.cancelPending, false);
@@ -340,15 +336,57 @@ test("Unbestätigter Abbruch bleibt offen und kann nach Verbindungsabbruch gepr�
   const f = fake({ dropCancel: true, timeout: 5 });
   await f.client.connect();
   await f.client.exchange(point, runId);
-  f.client.cancelSupported = true;
   await assert.rejects(f.client.cancelMeasurement(), /nicht bestätigt/);
   assert.equal(f.client.job.cancelPending, true);
   await assert.rejects(f.client.exchange(point, runId), /Abbruch/);
   f.client.disconnect();
-  assert.equal(f.client.cancelSupported, false);
   await f.client.connect();
-  f.client.cancelSupported = true;
   await f.client.cancelMeasurement();
   assert.equal(f.client.job, null);
   assert.equal(f.state.commands.filter((c) => c === "SP-1024;0").length, 1);
+});
+
+test("Neue Messung fragt nach laufendem Auftrag und startet nur nach bestätigtem Abbruch", async () => {
+  const f = fake();
+  await f.client.connect();
+  await f.client.exchange(point, runId);
+  let prompts = 0;
+  const next = { id: 2, code: "SP-2000", target: 3 };
+  const declined = await f.client.exchange(next, runId, async (code) => {
+    prompts++;
+    assert.equal(code, point.code);
+    return false;
+  });
+  assert.equal(declined, false);
+  assert.equal(f.client.job.code, point.code);
+  assert.equal(f.state.commands.includes("SP-1024;0"), false);
+  await f.client.exchange(next, runId, async (code) => {
+    prompts++;
+    assert.equal(code, point.code);
+    return true;
+  });
+  assert.equal(prompts, 2);
+  assert.equal(f.client.job.code, next.code);
+  const zero = f.state.commands.indexOf("SP-1024;0"),
+    start = f.state.commands.indexOf("SP-2000;3");
+  assert.ok(zero >= 0 && start > zero);
+});
+test("Bestätigter Neustart desselben Punktes wartet auf echten Abbruch und bewahrt fertige Ergebnisse", async () => {
+  const f = fake({ dropCancel: true, timeout: 5 });
+  await f.client.connect();
+  await f.client.exchange(point, runId);
+  await assert.rejects(
+    f.client.startMeasurement(point, runId, async () => true),
+    /nicht bestätigt/,
+  );
+  assert.equal(f.state.commands.filter((c) => c === "SP-1024;2.5").length, 1);
+  const g = fake({ readyOnCancel: true });
+  await g.client.connect();
+  await g.client.exchange(point, runId);
+  await assert.rejects(
+    g.client.startMeasurement(point, runId, async () => true),
+    /nicht bestätigt/,
+  );
+  assert.equal(g.state.led, true);
+  assert.equal(g.state.commands.filter((c) => c === "SP-1024;2.5").length, 1);
 });
