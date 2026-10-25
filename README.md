@@ -51,7 +51,7 @@ Zeitstempel bleiben intern für Reihenfolge und die Ermittlung der letzten Spül
 - CSRF-Token und Herkunftsprüfung für schreibende Anfragen, parametrisierte SQL-Abfragen, Content Security Policy, escapte Benutzereingaben.
 - Login-Drosselung nach Konto/IP und insgesamt nach Verbindungs-IP. Hinter einem Reverse Proxy ist die Verbindungs-IP die des Proxys; für größere Installationen zusätzlich am Proxy drosseln.
 - Deaktivierte Benutzer verlieren ihre Sitzungen und Freigaben. Passwort- und Rollenänderungen beenden bestehende Sitzungen. Der eigene Administrationszugang kann sich nicht selbst deaktivieren oder herabstufen.
-- Neue Benutzer und Passwortänderungen werden von der Administration verwaltet. Passwort-Selbstzurücksetzung, E-Mail-Einladungen und Zwei-Faktor-Authentifizierung sind noch nicht implementiert.
+- Neue Benutzer werden von der Administration verwaltet. Alle Rollen können ihr eigenes Passwort unter **Mein Passwort** mit dem bisherigen Passwort ändern. Ein Rücksetzen ohne Anmeldung per E-Mail, E-Mail-Einladungen und Zwei-Faktor-Authentifizierung sind noch nicht implementiert.
 
 Für den ortsunabhängig erreichbaren, internen Betrieb HTTPS vor dem Node-Prozess terminieren und die **exakte öffentliche Herkunft** setzen, beispielsweise:
 
@@ -119,3 +119,15 @@ Dieser Ablauf ist als Integrationsanforderung festgehalten; die aktuelle Website
 ## Interne Erreichbarkeit
 
 SpülPilot ist ausschließlich für berechtigte Personen der Stadtwerke Heppenheim vorgesehen. Es gibt keine öffentliche Registrierung und keine ohne Anmeldung abrufbaren Arbeitsdaten. Die IT stellt die ortsunabhängige Erreichbarkeit über HTTPS und die betrieblich vorgesehenen Zugangswege bereit. Eine konkrete, noch nicht installierte Proxyvorlage und Betriebsanweisungen stehen unter [deploy/README.md](deploy/README.md).
+
+## Persönliche Passwörter und Einmalpasswörter
+
+Jede Rolle hat den Menüpunkt **Mein Passwort**. Ein persönlicher Passwortwechsel benötigt das bisherige Passwort, zweimal das neue Passwort und mindestens 12 Zeichen. Die aktuelle Sitzung wird erneuert; alle anderen Sitzungen dieses Kontos werden beendet.
+
+Unter **Team & Zugänge → Einmalpasswort erstellen** kann die Administration für ein anderes aktives Konto ein neues, zufällig gewähltes Einmalpasswort aus Tier-/Gegenstandsname und vier Zahlen erzeugen, z. B. im Format `Giraffe` + `1234` oder `Lampe` + `0815`. Es erscheint nur einmal im geöffneten Dialog und wird weder im Browser gespeichert noch im Klartext in der Datenbank abgelegt. Nach dem Schließen kann die Administration es nicht erneut abrufen, sondern nur ein neues erzeugen. Übermittlung persönlich über einen sicheren betrieblichen Kanal.
+
+Einmalpasswörter sind bewusst einfach, deshalb **10 Minuten gültig**, nur für **eine Anmeldung** nutzbar und durch kontoübergreifend über IPs hinweg wirkende Login-Drosselung geschützt. Ein neues Einmalpasswort ersetzt das alte und beendet sämtliche bestehenden Sitzungen des Zielkontos. Die anschließende Sitzung ist auf den Pflichtwechsel beschränkt: nur eigenes Passwort setzen, Sitzungsinformationen und Abmeldung sind möglich. Listen und Verwaltungsfunktionen sind serverseitig gesperrt, auch für Administrationskonten. Erst nach dem Speichern eines neuen persönlichen Passworts wird der normale Zugriff freigeschaltet. Bei verlorenem oder abgelaufenem Einmalpasswort oder abgebrochenem Pflichtwechsel muss die Administration ein neues erzeugen.
+
+Das eigene Administrationspasswort wird unter **Mein Passwort** geändert. Bestehende Benutzerpasswörter können nicht mehr über das allgemeine Bearbeitungsformular gesetzt werden. Neue Benutzer behalten den bisherigen Anlageablauf mit einem mindestens zwölf Zeichen langen Anfangspasswort; bei Bedarf kann danach ein Einmalpasswort erzeugt werden. Bestandskonten bleiben bei der ergänzenden Datenbankmigration unverändert.
+
+Betrachter sehen **Geräte & Sensoren** nicht; auch der direkte Aufruf dieses Bereichs führt zurück zur Übersicht. Die tatsächliche ESP32-Anbindung folgt erst nach Abstimmung des Sende- und Empfangsformats.

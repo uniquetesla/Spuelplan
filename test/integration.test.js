@@ -611,3 +611,308 @@ test("Produktivstart verweigert unsichere Herkunft, Cookies und Demo-Konten", ()
     assert.equal(existsSync(join(dir, "guard.sqlite")), false);
   }
 });
+
+test("Alle Rollen ändern das eigene Passwort; andere Sitzungen werden ungültig", async () => {
+  for (const role of ["admin", "employee", "viewer"]) {
+    const email = `self-${role}@example.de`;
+    assert.equal(
+      (
+        await request("/users", {
+          session: admin,
+          body: { name: "Eigenes Konto", email, role, password },
+        })
+      ).status,
+      201,
+    );
+    const primary = await login(email),
+      secondary = await login(email),
+      nextPassword = "Neues-Passwort-2026!";
+    assert.equal(
+      (
+        await request("/account/password", {
+          session: primary,
+          body: {
+            current_password: "wrong",
+            new_password: nextPassword,
+            confirm_password: nextPassword,
+          },
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await request("/account/password", {
+          session: primary,
+          csrf: false,
+          body: {
+            current_password: password,
+            new_password: nextPassword,
+            confirm_password: nextPassword,
+          },
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await request("/account/password", {
+          session: primary,
+          body: {
+            current_password: password,
+            new_password: nextPassword,
+            confirm_password: "mismatch",
+          },
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await request("/account/password", {
+          session: primary,
+          body: {
+            current_password: password,
+            new_password: password,
+            confirm_password: password,
+          },
+        })
+      ).status,
+      400,
+    );
+    const changed = await request("/account/password", {
+      session: primary,
+      body: {
+        current_password: password,
+        new_password: nextPassword,
+        confirm_password: nextPassword,
+      },
+    });
+    assert.equal(changed.status, 200);
+    assert.equal(changed.data.user.must_change_password, false);
+    assert.equal((await request("/me", { session: secondary })).status, 401);
+    const updated = { ...changed.data, cookie: changed.cookie };
+    assert.equal((await request("/me", { session: updated })).status, 200);
+    assert.equal(
+      (await request("/login", { body: { email, password } })).status,
+      401,
+    );
+    assert.equal(
+      (await request("/login", { body: { email, password: nextPassword } }))
+        .status,
+      200,
+    );
+  }
+});
+test("Admin-Einmalpasswort ist nur einmal gültig; erzwungener Wechsel sperrt Arbeitsdaten", async () => {
+  const email = "reset@example.de";
+  const created = await request("/users", {
+    session: admin,
+    body: { name: "Reset Konto", email, role: "employee", password },
+  });
+  assert.equal(created.status, 201);
+  const target = await login(email),
+    id = created.data.id;
+  assert.equal(
+    (
+      await request(`/users/${id}/reset-password`, {
+        session: target,
+        body: {},
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request(`/users/${id}/reset-password`, {
+        session: admin,
+        csrf: false,
+        body: {},
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request(`/users/${admin.user.id}/reset-password`, {
+        session: admin,
+        body: {},
+      })
+    ).status,
+    400,
+  );
+  for (let i = 0; i < 8; i++)
+    assert.equal(
+      (
+        await request("/account/password", {
+          session: target,
+          body: {
+            current_password: "wrong",
+            new_password: "Falsches-Alt-2026!",
+            confirm_password: "Falsches-Alt-2026!",
+          },
+        })
+      ).status,
+      400,
+    );
+  assert.equal(
+    (
+      await request("/account/password", {
+        session: target,
+        body: {
+          current_password: "wrong",
+          new_password: "Falsches-Alt-2026!",
+          confirm_password: "Falsches-Alt-2026!",
+        },
+      })
+    ).status,
+    429,
+  );
+  const result = await request(`/users/${id}/reset-password`, {
+    session: admin,
+    body: {},
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.data.expires_in_minutes, 10);
+  const temporary = result.data.temporary_password;
+  assert.match(temporary, /^[A-Z][a-z]+\d{4}$/);
+  assert.equal((await request("/me", { session: target })).status, 401);
+  assert.equal(
+    (await request("/login", { body: { email, password } })).status,
+    401,
+  );
+  const signed = await request("/login", {
+    body: { email, password: temporary },
+  });
+  assert.equal(signed.status, 200);
+  assert.equal(signed.data.user.must_change_password, true);
+  const restricted = { ...signed.data, cookie: signed.cookie };
+  assert.equal(
+    (await request("/login", { body: { email, password: temporary } })).status,
+    401,
+  );
+  for (const path of ["/lists", "/flushes", "/users"]) {
+    const denied = await request(path, { session: restricted });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.data.code, "PASSWORD_CHANGE_REQUIRED");
+  }
+  assert.equal(
+    (await request("/me", { session: restricted })).data.user
+      .must_change_password,
+    true,
+  );
+  assert.equal(
+    (
+      await request("/account/password", {
+        session: restricted,
+        body: { new_password: "Giraffe1234", confirm_password: "Giraffe1234" },
+      })
+    ).status,
+    400,
+  );
+  const next = "Persoenliches-Passwort-2026!";
+  const changed = await request("/account/password", {
+    session: restricted,
+    body: { new_password: next, confirm_password: next },
+  });
+  assert.equal(changed.status, 200);
+  assert.equal((await request("/me", { session: restricted })).status, 401);
+  const updated = { ...changed.data, cookie: changed.cookie };
+  assert.equal((await lists(updated)).status, 200);
+  assert.equal(
+    (await request("/login", { body: { email, password: temporary } })).status,
+    401,
+  );
+  assert.equal(
+    (await request("/login", { body: { email, password: next } })).status,
+    200,
+  );
+  const db = new DatabaseSync(join(dir, "test.sqlite"));
+  const stored = db.prepare("SELECT * FROM users WHERE id=?").get(id);
+  assert.notEqual(stored.password, temporary);
+  assert.notEqual(stored.password, next);
+  assert.equal(stored.must_change_password, 0);
+  assert.equal(stored.temporary_expires, null);
+  db.close();
+});
+test("Abgelaufene und ersetzte Einmalpasswörter, Admin-Zugänge und Umgehungsversuche", async () => {
+  const email = "expire@example.de";
+  const created = await request("/users", {
+    session: admin,
+    body: { name: "Ablauf Konto", email, role: "admin", password },
+  });
+  const id = created.data.id;
+  const first = await request(`/users/${id}/reset-password`, {
+    session: admin,
+    body: {},
+  });
+  const second = await request(`/users/${id}/reset-password`, {
+    session: admin,
+    body: {},
+  });
+  assert.notEqual(
+    first.data.temporary_password,
+    second.data.temporary_password,
+  );
+  assert.equal(
+    (
+      await request("/login", {
+        body: { email, password: first.data.temporary_password },
+      })
+    ).status,
+    401,
+  );
+  const signed = await request("/login", {
+    body: { email, password: second.data.temporary_password },
+  });
+  assert.equal(signed.status, 200);
+  const restricted = { ...signed.data, cookie: signed.cookie };
+  assert.equal((await request("/users", { session: restricted })).status, 403);
+  assert.equal(
+    (
+      await request(`/users/${admin.user.id}/reset-password`, {
+        session: restricted,
+        body: {},
+      })
+    ).data.code,
+    "PASSWORD_CHANGE_REQUIRED",
+  );
+  assert.equal(
+    (await request("/logout", { session: restricted, body: {} })).status,
+    200,
+  );
+  const third = await request(`/users/${id}/reset-password`, {
+    session: admin,
+    body: {},
+  });
+  const db = new DatabaseSync(join(dir, "test.sqlite"));
+  db.prepare("UPDATE users SET temporary_expires=? WHERE id=?").run(
+    Date.now() - 1,
+    id,
+  );
+  db.close();
+  assert.equal(
+    (
+      await request("/login", {
+        body: { email, password: third.data.temporary_password },
+      })
+    ).status,
+    401,
+  );
+  assert.equal(
+    (
+      await request(`/users/${id}`, {
+        session: admin,
+        method: "PUT",
+        body: {
+          name: "Ablauf Konto",
+          email,
+          role: "admin",
+          active: true,
+          password: "Admin-Bypass-2026!",
+        },
+      })
+    ).status,
+    400,
+  );
+});

@@ -57,13 +57,15 @@ try {
   const click = (name) =>
     page.getByRole("button", { name, exact: true }).click();
   const closed = () => expect(page.locator("dialog")).not.toBeVisible();
-  async function login(email) {
+  async function login(email, loginPassword = password, forced = false) {
     await page.goto(base);
     await expect(page).toHaveTitle("SpülPilot · Stadtwerke Heppenheim");
     await page.getByLabel("E-Mail-Adresse", { exact: true }).fill(email);
-    await page.getByLabel("Passwort", { exact: true }).fill(password);
+    await page.getByLabel("Passwort", { exact: true }).fill(loginPassword);
     await click("Anmelden");
-    await expect(heading("Übersicht")).toBeVisible();
+    await expect(
+      heading(forced ? "Neues Passwort festlegen" : "Übersicht"),
+    ).toBeVisible();
   }
   async function logout() {
     await click("Abmelden");
@@ -247,7 +249,72 @@ try {
     false,
   );
   await page.screenshot({ path: "/tmp/spuelpilot-mobile.png", fullPage: true });
+  await expect(
+    page.getByRole("link", { name: "Geräte & Sensoren", exact: true }),
+  ).toHaveCount(0);
+  await page.goto(base + "/#/devices");
+  await expect(heading("Übersicht")).toBeVisible();
+  await expect(page.locator(".device-flow")).toHaveCount(0);
   await click("Menü öffnen");
+  await page.getByRole("link", { name: "Mein Passwort", exact: true }).click();
+  await expect(heading("Mein Passwort")).toBeVisible();
+  const viewerPassword = "Viewer-Passwort-2026!";
+  await page.getByLabel("Aktuelles Passwort", { exact: true }).fill(password);
+  await page.getByLabel("Neues Passwort", { exact: true }).fill(viewerPassword);
+  await page
+    .getByLabel("Neues Passwort wiederholen", { exact: true })
+    .fill(viewerPassword);
+  await click("Passwort speichern");
+  await expect(page.getByLabel("Neues Passwort", { exact: true })).toHaveValue(
+    "",
+  );
+  await click("Menü öffnen");
+  await logout();
+  console.log(
+    "PASS: Betrachter sehen keinen Sensormenüpunkt, auch nicht per Direktlink; eigener Passwortwechsel funktioniert.",
+  );
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  await login("admin@spuelplan.local");
+  await page.getByRole("link", { name: "Team & Zugänge", exact: true }).click();
+  await expect(heading("Team & Zugänge")).toBeVisible();
+  await page
+    .getByRole("row")
+    .filter({ has: page.getByText("Chris Weber", { exact: true }) })
+    .getByRole("button", { name: "Einmalpasswort erstellen", exact: true })
+    .click();
+  await click("Einmalpasswort generieren");
+  await expect(page.locator("#one-time-password")).toBeVisible();
+  const temporary = await page.locator("#one-time-password").inputValue();
+  assert.match(temporary, /^[A-Z][a-z]+\d{4}$/);
+  await click("Fertig");
+  await closed();
+  await expect(page.locator("#one-time-password")).toHaveCount(0);
+  await logout();
+  await login("betrachter@spuelplan.local", temporary, true);
+  await expect(page.locator(".sidebar")).toHaveCount(0);
+  await page.goto(base + "/#/lists");
+  await expect(heading("Neues Passwort festlegen")).toBeVisible();
+  const newPersonal = "Persoenlich-Neu-2026!";
+  await page.getByLabel("Neues Passwort", { exact: true }).fill(newPersonal);
+  await page
+    .getByLabel("Neues Passwort wiederholen", { exact: true })
+    .fill(newPersonal);
+  await click("Passwort speichern");
+  await expect(heading("Übersicht")).toBeVisible();
+  const fresh = await browser.newContext();
+  const reused = await fresh.request.post(base + "/api/login", {
+    headers: { Origin: base },
+    data: { email: "betrachter@spuelplan.local", password: temporary },
+  });
+  assert.equal(reused.status(), 401);
+  await fresh.close();
+  await logout();
+  await login("betrachter@spuelplan.local", newPersonal);
+  await logout();
+  console.log(
+    "PASS: Admin erzeugt Einmalpasswort; Pflichtwechsel sperrt Navigation und Arbeitsdaten; Einmalpasswort kann nicht wiederverwendet werden.",
+  );
+  await login("admin@spuelplan.local");
   await page
     .getByRole("link", { name: "Geräte & Sensoren", exact: true })
     .click();
@@ -255,10 +322,6 @@ try {
   const flow = await page.locator(".device-flow").textContent();
   assert.match(flow, /mindestens 1 m³\/h/);
   assert.match(flow, /5 Sekunden/);
-  await click("Menü öffnen");
-  await logout();
-  await page.setViewportSize({ width: 1440, height: 1050 });
-  await login("admin@spuelplan.local");
   await openList();
   await page.screenshot({ path: "/tmp/spuelpilot-list.png", fullPage: true });
   await click("Löschen");

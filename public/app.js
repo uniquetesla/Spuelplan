@@ -98,6 +98,11 @@ async function api(path, options = {}) {
       csrf = null;
       renderAuth();
     }
+    if (data.code === "PASSWORD_CHANGE_REQUIRED" && user) {
+      ++loadVersion;
+      user.must_change_password = true;
+      renderPasswordRequired();
+    }
     throw new Error(data.error || "Die Anfrage ist fehlgeschlagen.");
   }
   return data;
@@ -153,7 +158,10 @@ const navItems = () => [
   ["lists", "Spüllisten", "folder"],
   ["reports", "Spülprotokolle", "file"],
   ...(isAdmin() ? [["users", "Team & Zugänge", "users"]] : []),
-  ["devices", "Geräte & Sensoren", "bluetooth"],
+  ...(user.role !== "viewer"
+    ? [["devices", "Geräte & Sensoren", "bluetooth"]]
+    : []),
+  ["account", "Mein Passwort", "lock"],
 ];
 function layout(content, section) {
   const nav = navItems();
@@ -281,7 +289,7 @@ function usersPage() {
       button("Benutzer anlegen", "new-user", "plus"),
       "GEMEINSAM IM EINSATZ",
     ) +
-    `<div class="notice">${icon("shield")}<span><strong>Administration</strong> verwaltet Listen, Spülpunkte und Benutzer. <strong>Administration und Mitarbeiter</strong> dokumentieren Spülungen in ihren freigegebenen Listen. <strong>Betrachter</strong> lesen und drucken Protokolle.</span></div><section class="panel"><div class="panel-head"><div><h2>Dein Team</h2><p>${users.length} Benutzerkonten</p></div></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>E-Mail-Adresse</th><th>Rolle</th><th>Status</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td><strong>${esc(u.name)}</strong>${u.id === user.id ? '<span class="sub">Dein Konto</span>' : ""}</td><td>${esc(u.email)}</td><td><span class="badge ${u.role === "admin" ? "blue" : ""}">${roleName[u.role]}</span></td><td><span class="badge ${u.active ? "green" : ""}">${u.active ? "Aktiv" : "Deaktiviert"}</span></td><td><button class="table-action" data-action="edit-user" data-id="${u.id}">Bearbeiten ${icon("edit")}</button></td></tr>`).join("")}</tbody></table></div></section>`
+    `<div class="notice">${icon("shield")}<span><strong>Administration</strong> verwaltet Listen, Spülpunkte und Benutzer. <strong>Administration und Mitarbeiter</strong> dokumentieren Spülungen in ihren freigegebenen Listen. <strong>Betrachter</strong> lesen und drucken Protokolle.</span></div><section class="panel"><div class="panel-head"><div><h2>Dein Team</h2><p>${users.length} Benutzerkonten</p></div></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>E-Mail-Adresse</th><th>Rolle</th><th>Status</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td><strong>${esc(u.name)}</strong>${u.id === user.id ? '<span class="sub">Dein Konto</span>' : ""}</td><td>${esc(u.email)}</td><td><span class="badge ${u.role === "admin" ? "blue" : ""}">${roleName[u.role]}</span></td><td><span class="badge ${u.active ? "green" : ""}">${u.active ? "Aktiv" : "Deaktiviert"}</span>${u.must_change_password ? '<span class="sub">Passwortwechsel erforderlich</span>' : ""}</td><td><div class="actions"><button class="table-action" data-action="edit-user" data-id="${u.id}">Bearbeiten ${icon("edit")}</button>${u.active && u.id !== user.id ? `<button class="table-action" data-action="reset-password" data-id="${u.id}">Einmalpasswort erstellen ${icon("lock")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div></section>`
   );
 }
 function devicesPage() {
@@ -297,6 +305,7 @@ function devicesPage() {
 }
 async function render() {
   if (!user) return renderAuth();
+  if (user.must_change_password) return renderPasswordRequired();
   const version = ++loadVersion;
   try {
     const [ls, fs] = await Promise.all([api("/lists"), api("/flushes")]);
@@ -306,7 +315,13 @@ async function render() {
     const [path] = location.hash.slice(2).split("?"),
       parts = (path || "overview").split("/");
     const section = parts[0];
-    if (section === "users" && isAdmin()) {
+    if (section === "account") {
+      layout(accountPage(), "account");
+      bindPasswordForm();
+    } else if (section === "devices" && user.role === "viewer") {
+      location.hash = "#/overview";
+      return;
+    } else if (section === "users" && isAdmin()) {
       users = await api("/users");
       if (version !== loadVersion) return;
       layout(usersPage(), "users");
@@ -374,6 +389,7 @@ async function render() {
       layout(overview(), "overview");
     }
   } catch (e) {
+    if (version !== loadVersion || user?.must_change_password) return;
     toast(e.message);
     if (user)
       app.innerHTML = `<div class="error-page"><h1>Verbindung unterbrochen</h1><p>${esc(e.message)}</p><button class="button" id="retry">Erneut versuchen</button></div>`;
@@ -384,6 +400,7 @@ function field(label, name, value = "", type = "text", extra = "") {
   return `<div class="field"><label for="f-${name}">${label}</label><input id="f-${name}" name="${name}" type="${type}" value="${esc(value)}" ${extra}></div>`;
 }
 function showModal(title, subtitle, body, onSubmit, submitLabel = "Speichern") {
+  modal.oncancel = null;
   modal.innerHTML = `<form id="modal-form"><header class="modal-head"><div><h2>${title}</h2><p>${subtitle}</p></div><button class="close" type="button" data-close aria-label="Schließen">${icon("close")}</button></header><div class="modal-body"><div class="form-error" id="modal-error" role="alert"></div>${body}</div><footer class="modal-footer"><button type="button" class="button secondary" data-close>Abbrechen</button>${onSubmit ? `<button type="submit" class="button">${icon("check")}${submitLabel}</button>` : ""}</footer></form>`;
   modal
     .querySelectorAll("[data-close]")
@@ -394,7 +411,11 @@ function showModal(title, subtitle, body, onSubmit, submitLabel = "Speichern") {
     const b = e.target.querySelector("[type=submit]");
     b.disabled = true;
     try {
-      await onSubmit(Object.fromEntries(new FormData(e.target)), e.target);
+      const outcome = await onSubmit(
+        Object.fromEntries(new FormData(e.target)),
+        e.target,
+      );
+      if (outcome === "keep-open") return;
       modal.close();
       await render();
     } catch (err) {
@@ -512,13 +533,15 @@ function userModal(u) {
             `<option value="${value}" ${(u?.role || "employee") === value ? "selected" : ""}>${label}</option>`,
         )
         .join("")}</select></div>` +
-      field(
-        u ? "Neues Passwort (optional)" : "Passwort",
-        "password",
-        "",
-        "password",
-        `${u ? "" : "required"} minlength="12" maxlength="128" autocomplete="new-password" placeholder="Mindestens 12 Zeichen"`,
-      ) +
+      (u
+        ? '<div class="notice">Benutzerpasswörter werden über „Einmalpasswort erstellen“ zurückgesetzt. Das persönliche Passwort vergibt die Person anschließend selbst.</div>'
+        : field(
+            "Passwort",
+            "password",
+            "",
+            "password",
+            'required minlength="12" maxlength="128" autocomplete="new-password" placeholder="Mindestens 12 Zeichen"',
+          )) +
       (u
         ? `<label class="checkbox-row"><input type="checkbox" name="active" ${u.active ? "checked" : ""}><span><strong>Konto aktiv</strong><small>Deaktivierte Konten haben keinen Zugriff mehr.</small></span></label>`
         : "") +
@@ -600,6 +623,104 @@ function deleteListModal() {
     "Liste löschen",
   );
 }
+function passwordForm(forced = false) {
+  return `<form id="password-form" class="password-form"><div class="form-error" id="password-error" role="alert"></div>${forced ? "" : field("Aktuelles Passwort", "current_password", "", "password", 'required maxlength="128" autocomplete="current-password"')}${field("Neues Passwort", "new_password", "", "password", 'required minlength="12" maxlength="128" autocomplete="new-password"')}${field("Neues Passwort wiederholen", "confirm_password", "", "password", 'required minlength="12" maxlength="128" autocomplete="new-password"')}<div class="notice">${icon("shield")}<span>Wähle ein persönliches Passwort mit mindestens 12 Zeichen. Nach dem Speichern werden alle anderen Sitzungen abgemeldet.</span></div><button type="submit" class="button">${icon("check")}Passwort speichern</button>${forced ? '<button type="button" class="button secondary" id="password-logout">Abmelden</button>' : ""}</form>`;
+}
+function accountPage() {
+  return (
+    heading(
+      "Mein Passwort",
+      "Ändere dein persönliches Passwort. Dein Zugang bleibt deiner Rolle zugeordnet.",
+      "",
+      "PERSÖNLICHER ZUGANG",
+    ) +
+    `<section class="panel account-panel"><div class="panel-head"><div><h2>${esc(user.name)}</h2><p>${esc(user.email)}</p></div></div><div class="account-body">${passwordForm()}</div></section>`
+  );
+}
+function renderPasswordRequired() {
+  if (modal.open) modal.close();
+  app.innerHTML = `<div class="required-password"><div class="required-card">${brand()}<div class="login-role">Persönlichen Zugang einrichten</div><h1>Neues Passwort festlegen</h1><p class="subtitle">Du bist mit einem Einmalpasswort angemeldet. Vergib zuerst dein eigenes Passwort, um SpülPilot zu verwenden.</p>${passwordForm(true)}</div></div>`;
+  bindPasswordForm(true);
+}
+function bindPasswordForm(forced = false) {
+  const form = document.querySelector("#password-form");
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const submit = form.querySelector("[type=submit]");
+    submit.disabled = true;
+    try {
+      const result = await send(
+        "/account/password",
+        Object.fromEntries(new FormData(form)),
+      );
+      user = result.user;
+      csrf = result.csrf;
+      toast(
+        "Dein Passwort wurde geändert. Andere Sitzungen wurden abgemeldet.",
+      );
+      if (forced) location.hash = "#/overview";
+      await render();
+    } catch (error) {
+      const message = document.querySelector("#password-error");
+      if (message) message.textContent = error.message;
+      submit.disabled = false;
+    }
+  };
+  document
+    .querySelector("#password-logout")
+    ?.addEventListener("click", async () => {
+      try {
+        await send("/logout", {});
+        ++loadVersion;
+        user = null;
+        csrf = null;
+        renderAuth();
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+}
+function resetPasswordModal(u) {
+  showModal(
+    "Einmalpasswort erstellen",
+    esc(u.name),
+    `<div class="notice">${icon("lock")}<span>Das bisherige Passwort wird ungültig und alle Sitzungen von ${esc(u.name)} werden beendet. Ein neues Tier-/Gegenstand-Passwort mit Zahlen ist 10 Minuten gültig und kann nur einmal zur Anmeldung verwendet werden. Danach muss die Person ein eigenes Passwort festlegen.</span></div>`,
+    async () => {
+      const resetForm = modal.querySelector("#modal-form");
+      const result = await send(`/users/${u.id}/reset-password`, {});
+      if (!modal.open || modal.querySelector("#modal-form") !== resetForm)
+        return "keep-open";
+      resetForm.onsubmit = (e) => e.preventDefault();
+      // The secret exists only in this response and this open dialog, never in storage or logs.
+      modal.querySelector(".modal-body").innerHTML =
+        `<p class="subtitle">Einmalpasswort für ${esc(u.name)}. Übermittle es persönlich über einen sicheren Kanal.</p><label for="one-time-password">Neu erzeugtes Einmalpasswort</label><input id="one-time-password" class="one-time-password" readonly autocomplete="off" spellcheck="false"><div class="notice">${icon("clock")}Einmalige Anmeldung innerhalb von ${result.expires_in_minutes} Minuten. Anschließend ist ein eigenes Passwort erforderlich. Nach dem Schließen wird das Passwort nicht erneut angezeigt.</div>`;
+      modal.querySelector("#one-time-password").value =
+        result.temporary_password;
+      modal.querySelector(".modal-footer").innerHTML =
+        '<button type="button" class="button" id="close-reset">Fertig</button>';
+      modal.querySelector("#close-reset").onclick = () => {
+        modal.querySelector("#one-time-password").value = "";
+        modal.close();
+        modal.innerHTML = "";
+        render();
+      };
+      modal.querySelector("[data-close]").onclick = () => {
+        modal.close();
+        modal.innerHTML = "";
+        render();
+      };
+      modal.oncancel = () => {
+        setTimeout(() => {
+          modal.innerHTML = "";
+          render();
+        }, 0);
+        modal.oncancel = null;
+      };
+      return "keep-open";
+    },
+    "Einmalpasswort generieren",
+  );
+}
 function bindActions(root = app) {
   root.querySelectorAll("[data-action]").forEach(
     (b) =>
@@ -626,6 +747,10 @@ function bindActions(root = app) {
           else if (action === "restart") await assignModal(true);
           else if (action === "publish") publishModal();
           else if (action === "delete-list") deleteListModal();
+          else if (action === "reset-password")
+            resetPasswordModal(
+              users.find((u) => u.id === Number(b.dataset.id)),
+            );
           else if (action === "new-user") userModal();
           else if (action === "edit-user")
             userModal(users.find((u) => u.id === Number(b.dataset.id)));
