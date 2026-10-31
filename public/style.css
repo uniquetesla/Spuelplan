@@ -2095,3 +2095,17 @@ tr.point-issue:hover {
     display: none !important;
   }
 }
+
+/* Internal notes take priority over progress and completion, including hover. */
+tr.point-working > td,
+tr.point-working:hover > td {
+  background: #fff7d6;
+}
+tr.point-complete > td,
+tr.point-complete:hover > td {
+  background: #e9f8ee;
+}
+tr.point-issue > td,
+tr.point-issue:hover > td {
+  background: #fff0f0;
+}

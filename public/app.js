@@ -94,11 +94,13 @@ modal.addEventListener("close", () => {
   if (!modal.open) {
     activeBleForm = null;
     modal.innerHTML = "";
+    refreshPointStates();
   }
 });
 ble.addEventListener("change", () => {
   updateBlePanels();
   syncBleForm();
+  refreshPointStates();
   queueMicrotask(processReadyMeasurement);
 });
 const isAdmin = () => user?.role === "admin";
@@ -307,6 +309,39 @@ function listDetail() {
     `<div class="lifecycle-strip">${statusBadge(l)}<span>Durchgang ${l.run_number}</span><span>${l.published_count} gespeicherte Durchgänge</span></div><div class="detail-strip"><div><small>Spülpunkte</small><strong>${l.point_count} angelegt</strong></div><div><small>Dokumentiert</small><strong>${l.completed_count} von ${l.point_count} Punkten</strong></div><div><small>Freigegeben für</small><strong>${esc(l.assignees.map((a) => a.name).join(", ") || "Noch keine Personen")}</strong></div><div><small>Letzte Spülung</small><strong>${date(l.last_flush)}</strong></div></div><div class="section-head"><div><h2>Spülpunkte</h2><p>Wähle einen Punkt für Details${canDocument() ? " und die nächste Spülung" : ""}.</p></div>${isAdmin() ? `<div class="actions">${l.status === "active" ? `<button class="text-link" data-action="edit-list">${icon("edit")}Liste bearbeiten</button>` : ""}<button class="text-link" data-action="list-reports">${icon("file")}Protokolle</button>${l.status !== "active" ? '<button class="text-link delete-link" data-action="delete-run">Durchlauf löschen</button>' : ""}<button class="text-link delete-link" data-action="delete-list">${icon("close")}Löschen</button></div>` : ""}</div><div class="toolbar"><div class="search">${icon("search")}<input id="point-search" type="search" placeholder="ID oder Adresse suchen …" aria-label="Spülpunkte suchen"></div></div><section class="panel" id="points-results">${pointTable(points)}</section><div class="notice">${icon("info")}<span>${l.status === "active" ? "Jeder Punkt wird einmal pro Durchgang bearbeitet. Nach dem letzten offenen Punkt geht die Liste automatisch zur Prüfung an die Administration und verschwindet bei den Mitarbeitern." : l.status === "review" ? "Dieser Durchgang ist abgeschlossen. Die Administration prüft und speichert ihn und gibt ihn anschließend für Betrachter frei." : "Dieser Durchgang ist gespeichert und für Betrachter freigegeben. Ein neuer Durchgang beginnt wieder mit offenen Punkten; gespeicherte Ergebnisse bleiben erhalten."}</span></div>`
   );
 }
+function pointState(p) {
+  if (notes.some((n) => n.point_id === p.id)) return "point-issue";
+  if (p.completed) return "point-complete";
+  const editing =
+    modal.open &&
+    activeBleForm?.point.id === p.id &&
+    activeBleForm.runId === currentList?.run_id;
+  const measuring =
+    ble.job &&
+    !ble.job.savedId &&
+    ble.job.pointId === p.id &&
+    ble.job.runId === currentList?.run_id;
+  return editing || measuring ? "point-working" : "";
+}
+function refreshPointStates() {
+  document.querySelectorAll('tr[data-action="select-point"]').forEach((row) => {
+    const p = points.find((p) => p.id === Number(row.dataset.id));
+    if (!p) return;
+    const state = pointState(p);
+    for (const name of ["point-issue", "point-complete", "point-working"])
+      row.classList.toggle(name, state === name);
+    const badge = row.querySelector("td:nth-child(5) .badge");
+    if (badge) {
+      badge.textContent =
+        state === "point-working"
+          ? "In Bearbeitung"
+          : p.completed
+            ? "Bearbeitet"
+            : "Noch offen";
+      badge.classList.toggle("amber", state === "point-working");
+    }
+  });
+}
 function pointTable(rows) {
   if (!rows.length)
     return empty(
@@ -318,7 +353,7 @@ function pointTable(rows) {
         ? button("Spülpunkt anlegen", "new-point")
         : "",
     );
-  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th><th>Sollmenge</th><th>Letzte Spülung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((p) => `<tr class="point-selectable ${notes.some((n) => n.point_id === p.id) ? "point-issue" : ""}" data-action="select-point" data-id="${p.id}" tabindex="0" aria-label="Spülpunkt ${esc(p.code)} auswählen"><td><span class="point-id">${esc(p.code)}</span></td><td><strong>${esc(p.address)}</strong></td><td>${number(p.target)} m³</td><td>${p.last_flush ? date(p.last_flush) : "—"}</td><td><span class="badge ${p.completed ? "green" : ""}">${p.completed ? "Bearbeitet" : "Noch offen"}</span></td><td><div class="actions">${canDocument() && !p.completed ? `<button class="table-action" data-action="flush" data-id="${p.id}">Spülung erfassen ${icon("arrow")}</button>` : ""}${isAdmin() || user.role === "viewer" ? `<button class="table-action" data-action="point-detail" data-id="${p.id}">${isAdmin() && currentList.status === "active" && !p.completed ? "Bearbeiten" : "Details"}${icon(isAdmin() ? "edit" : "chevron")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th><th>Sollmenge</th><th>Letzte Spülung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((p) => `<tr class="point-selectable ${pointState(p)}" data-action="select-point" data-id="${p.id}" tabindex="0" aria-label="Spülpunkt ${esc(p.code)} auswählen"><td><span class="point-id">${esc(p.code)}</span></td><td><strong>${esc(p.address)}</strong></td><td>${number(p.target)} m³</td><td>${p.last_flush ? date(p.last_flush) : "—"}</td><td><span class="badge ${p.completed ? "green" : pointState(p) === "point-working" ? "amber" : ""}">${p.completed ? "Bearbeitet" : pointState(p) === "point-working" ? "In Bearbeitung" : "Noch offen"}</span></td><td><div class="actions">${canDocument() && !p.completed ? `<button class="table-action" data-action="flush" data-id="${p.id}">Spülung erfassen ${icon("arrow")}</button>` : ""}${isAdmin() || user.role === "viewer" ? `<button class="table-action" data-action="point-detail" data-id="${p.id}">${isAdmin() && currentList.status === "active" && !p.completed ? "Bearbeiten" : "Details"}${icon(isAdmin() ? "edit" : "chevron")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>`;
 }
 function reportRuns() {
   return archivedRuns.map((r) => ({
@@ -904,7 +939,7 @@ function flushModal(p) {
   showModal(
     "Spülung dokumentieren",
     esc(p.code) + " · " + esc(p.address),
-    `<div class="measure-box">${icon("drop")}<div><strong>Geplante Spülmenge</strong><small>${esc(currentList.name)}</small></div><b>${number(p.target)} <small>m³</small></b></div><div class="ble-widget" data-ble-panel="form"></div><div class="form-row">${field("Temperatur vorher · °C", "temperature_before", "", "number", 'required min="0" max="100" step="any" placeholder="22,0"')}${field("Temperatur nachher · °C", "temperature_after", "", "number", 'required min="0" max="100" step="any" placeholder="14,0"')}</div>${field("Tatsächlich gespülte Menge · m³", "volume", "", "number", 'required min="0.001" max="1000000" step="any" placeholder="z. B. 2,6"')}<div class="field"><label for="f-turbidity">Trübung festgestellt?</label><select id="f-turbidity" name="turbidity" required><option value="">Bitte auswählen</option><option value="false">Nein – keine Trübung</option><option value="true">Ja – Trübung vorhanden</option></select></div><div class="field"><label for="f-note">Interne Bemerkung <span class="muted">(optional)</span></label><textarea id="f-note" name="note" maxlength="2000" rows="3" placeholder="Zum Beispiel: Hydrant undicht oder Beschädigung festgestellt"></textarea><small class="field-hint">Nur für Administration und berechtigte Mitarbeiter. Nicht für Betrachter oder den Ausdruck.</small></div><div class="notice">${icon("clock")}<span>Bei READY wird automatisch abgerufen und gespeichert, sobald die Trübung ausgewählt ist. Interne Bemerkungen bitte vor Messende ergänzen.<br>Das Spüldatum wird beim Speichern automatisch eingetragen.<br>Mitarbeiter: <strong>${esc(user.name)}</strong><br>Das Protokoll bleibt als unveränderlicher Nachweis erhalten.</span></div>`,
+    `<div class="measure-box">${icon("drop")}<div><strong>Geplante Spülmenge</strong><small>${esc(currentList.name)}</small></div><b>${number(p.target)} <small>m³</small></b></div><div class="ble-widget" data-ble-panel="form"></div><div class="form-row">${field("Temperatur vorher · °C", "temperature_before", "", "number", 'required min="0" max="100" step="any" placeholder="22,0"')}${field("Temperatur nachher · °C", "temperature_after", "", "number", 'required min="0" max="100" step="any" placeholder="14,0"')}</div>${field("Tatsächlich gespülte Menge · m³", "volume", "", "number", 'required min="0.001" max="1000000" step="any" placeholder="z. B. 2,6"')}<div class="field"><label for="f-turbidity">Trübung festgestellt?</label><select id="f-turbidity" name="turbidity" required><option value="false" selected>Nein – keine Trübung</option><option value="true">Ja – Trübung vorhanden</option></select></div><div class="field"><label for="f-note">Interne Bemerkung <span class="muted">(optional)</span></label><textarea id="f-note" name="note" maxlength="2000" rows="3" placeholder="Zum Beispiel: Hydrant undicht oder Beschädigung festgestellt"></textarea><small class="field-hint">Nur für Administration und berechtigte Mitarbeiter. Nicht für Betrachter oder den Ausdruck.</small></div><div class="notice">${icon("clock")}<span>Bei READY wird automatisch abgerufen und gespeichert, sobald die Trübung ausgewählt ist. Interne Bemerkungen bitte vor Messende ergänzen.<br>Das Spüldatum wird beim Speichern automatisch eingetragen.<br>Mitarbeiter: <strong>${esc(user.name)}</strong><br>Das Protokoll bleibt als unveränderlicher Nachweis erhalten.</span></div>`,
     async (data) => {
       const context = activeBleForm;
       if (context?.serverSaved)
@@ -950,6 +985,7 @@ function flushModal(p) {
   updateBlePanels();
   syncBleForm();
   importCompletedMeasurement();
+  refreshPointStates();
   queueMicrotask(processReadyMeasurement);
 }
 async function pointDetail(p) {

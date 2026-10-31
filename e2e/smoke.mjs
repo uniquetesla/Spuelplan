@@ -99,6 +99,12 @@ try {
       .locator("td")
       .nth(1)
       .click();
+    await expect(
+      page.getByLabel("Trübung festgestellt?", { exact: true }),
+    ).toHaveValue("false");
+    await expect(
+      page.locator('tr[data-action="select-point"]').filter({ hasText: code }),
+    ).toHaveClass(/point-working/);
     await page
       .getByLabel("Temperatur vorher · °C", { exact: true })
       .fill("23.1");
@@ -136,6 +142,18 @@ try {
   ).toHaveCount(2);
   await documentPoint("UI-001", "2.6");
   await expect(
+    page
+      .locator('tr[data-action="select-point"]')
+      .filter({ hasText: "UI-001" }),
+  ).toHaveClass(/point-complete/);
+  await expect(
+    page
+      .locator('tr[data-action="select-point"]')
+      .filter({ hasText: "UI-001" })
+      .locator("td")
+      .first(),
+  ).toHaveCSS("background-color", "rgb(233, 248, 238)");
+  await expect(
     page.getByRole("button", { name: "Spülung erfassen", exact: true }),
   ).toHaveCount(1);
   await logout();
@@ -167,6 +185,18 @@ try {
   ).toBeVisible();
   await openList();
   await expect(page.getByText("Zur Prüfung", { exact: true })).toBeVisible();
+  await expect(
+    page
+      .locator('tr[data-action="select-point"]')
+      .filter({ hasText: "UI-002" }),
+  ).toHaveClass(/point-issue/);
+  await expect(
+    page
+      .locator('tr[data-action="select-point"]')
+      .filter({ hasText: "UI-002" })
+      .locator("td")
+      .first(),
+  ).toHaveCSS("background-color", "rgb(255, 240, 240)");
   await click("Speichern & für Betrachter freigeben");
   await click("Speichern & freigeben");
   await closed();
