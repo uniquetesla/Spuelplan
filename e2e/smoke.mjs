@@ -60,6 +60,10 @@ try {
   async function login(email, loginPassword = password, forced = false) {
     await page.goto(base);
     await expect(page).toHaveTitle("SpülPilot · Stadtwerke Heppenheim");
+    await expect(page.locator(".auth-demo")).toHaveCount(0);
+    await expect(page.locator(".auth-security")).toContainText(
+      "Nur für berechtigte Personen",
+    );
     await page.getByLabel("E-Mail-Adresse", { exact: true }).fill(email);
     await page.getByLabel("Passwort", { exact: true }).fill(loginPassword);
     await click("Anmelden");
@@ -123,7 +127,17 @@ try {
     await click("Spülung speichern");
     await closed();
   }
+  await page.goto(base);
+  await page.screenshot({
+    path: "/tmp/spuelpilot-glass-login.png",
+    fullPage: true,
+  });
   await login("admin@spuelplan.local");
+  await expect(page.locator(".demo-notice")).toHaveCount(0);
+  await page.screenshot({
+    path: "/tmp/spuelpilot-glass-overview.png",
+    fullPage: true,
+  });
   await click("Neue Spülliste");
   await page.getByLabel("Listenname", { exact: true }).fill("UI-Testgebiet");
   await click("Speichern");

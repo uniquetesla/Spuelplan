@@ -150,6 +150,41 @@ try {
   );
   await expect(page.locator('input[name="temperature_before"]')).toHaveCount(0);
   const id = Number(page.url().split("/").at(-1));
+  await page.goto(base + "/#/account");
+  await expect(
+    page.getByRole("heading", { name: "Mein Passwort", exact: true, level: 1 }),
+  ).toBeVisible();
+  await expect(page.locator('[data-measurement="flow"]')).toBeVisible();
+  await expect(page.locator('[data-measurement="flow"]')).toContainText(
+    "Hydrant Marktstraße 12",
+  );
+  await page.locator('[data-measurement="flow"]').click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Hydrant Marktstraße 12",
+      exact: true,
+      level: 1,
+    }),
+  ).toBeVisible();
+  await page.route("**/api/lists", (route) => route.abort("failed"));
+  await page.goto(base + "/#/account");
+  await expect(
+    page.getByRole("heading", {
+      name: "Verbindung unterbrochen",
+      exact: true,
+      level: 1,
+    }),
+  ).toBeVisible();
+  await expect(page.locator('[data-measurement="flow"]')).toBeVisible();
+  await page.unroute("**/api/lists");
+  await page.locator('[data-measurement="flow"]').click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Hydrant Marktstraße 12",
+      exact: true,
+      level: 1,
+    }),
+  ).toBeVisible();
   await page.route("**/api/flow-measurements/*/samples", (route) =>
     route.abort("failed"),
   );
@@ -191,6 +226,8 @@ try {
   ).toBeVisible();
   await click("Speicherung erneut versuchen");
   await expect(page.locator("[data-flow-recording]")).toHaveCount(0);
+  await expect(page.locator('[data-measurement="flow"]')).toHaveCount(0);
+  await expect(page.locator("#measurement-dock")).toBeHidden();
   const saved = await (await admin.get("/api/flow-measurements/" + id)).json();
   assert.equal(saved.status, "completed");
   assert.equal(saved.sample_count, 4);
@@ -267,6 +304,8 @@ try {
   await page.setViewportSize({ width: 1440, height: 1050 });
   await click("Abmelden");
   await login("betrachter@spuelplan.local");
+  await expect(page.locator("[data-measurement]")).toHaveCount(0);
+  await expect(page.locator("#measurement-dock")).toBeHidden();
   await expect(
     page.getByRole("link", { name: "Durchflussmessung", exact: true }),
   ).toHaveCount(0);
