@@ -329,6 +329,37 @@ try {
   await expect(page.locator('[data-live="remaining"]')).toHaveText(
     "16 Min. 40 Sek.",
   );
+  const priorStarts = await page.evaluate(
+    () => window.__ble.commands.filter((c) => c === "SP-BLE;2.5").length,
+  );
+  await page.getByRole("button", { name: "Schließen", exact: true }).click();
+  await page.goto(base + "/#/account");
+  await expect(
+    page.getByRole("heading", { name: "Mein Passwort", exact: true, level: 1 }),
+  ).toBeVisible();
+  const dock = page.locator('[data-measurement="ble"]');
+  await expect(dock).toBeVisible();
+  await expect(dock).toContainText("50 %");
+  await dock.focus();
+  await page.evaluate(() =>
+    window.__ble.notify("LIVE;MEASURING;SP-BLE;4.5;12.4;1.5;2.5;60;800"),
+  );
+  await expect(dock).toBeFocused();
+  await expect(dock).toContainText("60 %");
+  await page.emulateMedia({ media: "print" });
+  await expect(page.locator("#measurement-dock")).not.toBeVisible();
+  await page.emulateMedia({ media: "screen" });
+  await dock.click();
+  await expect(
+    page.getByRole("heading", { name: "Spülung dokumentieren", exact: true }),
+  ).toBeVisible();
+  assert.equal(
+    await page.evaluate(
+      () => window.__ble.commands.filter((c) => c === "SP-BLE;2.5").length,
+    ),
+    priorStarts,
+    "opening the running job must never start another hardware measurement",
+  );
   await page.evaluate(() =>
     window.__ble.notify("LIVE;WAIT_FLOW;SP-BLE;0;12.4;1.25;2.5;50;-1"),
   );
@@ -462,6 +493,19 @@ try {
   );
   assert.equal(commands.filter((c) => c === "SP-BLE;2.5").length, 3);
   assert.equal(commands.filter((c) => c === "ACK;SP-BLE").length, 1);
+  await page.goto(base + "/#/flow");
+  await page
+    .getByRole("button", { name: "Neue Durchflussmessung", exact: true })
+    .click();
+  await page
+    .getByLabel("Adresse", { exact: true })
+    .fill("Parallele Durchflussmessung");
+  await page
+    .locator("dialog")
+    .getByRole("button", { name: "Aufzeichnung starten", exact: true })
+    .click();
+  await expect(page.locator("dialog")).not.toBeVisible();
+  await expect(page.locator('[data-measurement="flow"]')).toBeVisible();
   // A second run completes autonomously while disconnected. The existing job
   // metadata supplies the explicitly chosen turbidity, never a guessed default.
   assert.equal(
@@ -518,6 +562,10 @@ try {
   await expect(page.locator('[data-live="percent"]:visible')).toHaveText(
     "50 %",
   );
+  await expect(page.locator("#measurement-dock .measurement-tile")).toHaveCount(
+    2,
+  );
+  await expect(page.locator("body")).toHaveClass(/has-two-measurements/);
   await page.screenshot({
     path: "/tmp/spuelpilot-live-mobile.png",
     fullPage: true,
@@ -578,6 +626,23 @@ try {
       ),
     )
     .toEqual([]);
+  await expect(page.locator('[data-measurement="ble"]')).toHaveCount(0);
+  await expect(page.locator('[data-measurement="flow"]')).toBeVisible();
+  await page.locator('[data-measurement="flow"]').click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Parallele Durchflussmessung",
+      exact: true,
+      level: 1,
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Messung beenden", exact: true })
+    .click();
+  await expect(page.locator("#measurement-dock")).toBeHidden();
+  console.log(
+    "PASS: Seitenübergreifende Messungsanzeige für parallele Spül- und Durchflussmessungen, direkte Rückkehr zum Messpunkt ohne Neustart, stabiler Tastaturfokus und druckfreie Anzeige.",
+  );
   console.log(
     "PASS: Live im Leerlauf, Fortschritt, Restzeit, Fehler und mobile Anzeige; READY ruft automatisch ab, speichert einmalig und bestätigt erst nach Servererfolg; autonome Messung nach Trennung wird korrekt wiederaufgenommen.",
   );
