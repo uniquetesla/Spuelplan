@@ -109,6 +109,13 @@ try {
     await expect(
       page.locator('tr[data-action="select-point"]').filter({ hasText: code }),
     ).toHaveClass(/point-working/);
+    await expect(
+      page
+        .locator('tr[data-action="select-point"]')
+        .filter({ hasText: code })
+        .locator("td")
+        .first(),
+    ).toHaveCSS("background-color", "rgb(255, 224, 138)");
     await page
       .getByLabel("Temperatur vorher · °C", { exact: true })
       .fill("23.1");
@@ -166,7 +173,7 @@ try {
       .filter({ hasText: "UI-001" })
       .locator("td")
       .first(),
-  ).toHaveCSS("background-color", "rgb(233, 248, 238)");
+  ).toHaveCSS("background-color", "rgb(182, 232, 195)");
   await expect(
     page.getByRole("button", { name: "Spülung erfassen", exact: true }),
   ).toHaveCount(1);
@@ -210,7 +217,28 @@ try {
       .filter({ hasText: "UI-002" })
       .locator("td")
       .first(),
-  ).toHaveCSS("background-color", "rgb(255, 240, 240)");
+  ).toHaveCSS("background-color", "rgb(246, 177, 182)");
+  await expect(
+    page
+      .locator('tr[data-action="select-point"]')
+      .filter({ hasText: "UI-002" })
+      .locator("td:nth-child(5)"),
+  ).toContainText("Interner Hinweis");
+  await page
+    .locator('tr[data-action="select-point"]')
+    .filter({ hasText: "UI-002" })
+    .hover();
+  await expect(
+    page
+      .locator('tr[data-action="select-point"]')
+      .filter({ hasText: "UI-002" })
+      .locator("td")
+      .first(),
+  ).toHaveCSS("background-color", "rgb(246, 177, 182)");
+  await page.screenshot({
+    path: "/tmp/spuelpilot-status-colors.png",
+    fullPage: true,
+  });
   await click("Speichern & für Betrachter freigeben");
   await click("Speichern & freigeben");
   await closed();
