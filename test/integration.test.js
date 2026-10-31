@@ -824,6 +824,19 @@ test("Admin-Einmalpasswort ist nur einmal g체ltig; erzwungener Wechsel sperrt Ar
   assert.equal(signed.status, 200);
   assert.equal(signed.data.user.must_change_password, true);
   const restricted = { ...signed.data, cookie: signed.cookie };
+  const sessionDb = new DatabaseSync(join(dir, "test.sqlite"));
+  const restrictedDeadline = sessionDb
+    .prepare("SELECT expires FROM sessions WHERE csrf=?")
+    .get(restricted.csrf).expires;
+  assert.ok(restrictedDeadline <= Date.now() + 10 * 60000);
+  await request("/me", { session: restricted });
+  assert.equal(
+    sessionDb
+      .prepare("SELECT expires FROM sessions WHERE csrf=?")
+      .get(restricted.csrf).expires,
+    restrictedDeadline,
+  );
+  sessionDb.close();
   assert.equal(
     (await request("/login", { body: { email, password: temporary } })).status,
     401,
@@ -1593,4 +1606,51 @@ test("Statistikreset ist best채tigt, rollenbeschr채nkt, dauerhaft und erh채lt s�
     ),
     false,
   );
+});
+
+test("Normale Anmeldung bleibt 30 Tage bestehen und verl채ngert sich bei Nutzung; abgelaufene Sitzungen bleiben gesperrt", async () => {
+  const response = await fetch(base + "/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: base },
+    body: JSON.stringify({ email: "admin@example.de", password }),
+  });
+  assert.equal(response.status, 200);
+  const cookie = response.headers.get("set-cookie");
+  assert.match(cookie, /Max-Age=2592000/);
+  assert.match(cookie, /HttpOnly/i);
+  assert.match(cookie, /SameSite=Strict/i);
+  const data = await response.json(),
+    session = { ...data, cookie: cookie.split(";")[0] };
+  const db = new DatabaseSync(join(dir, "test.sqlite"));
+  const initial = db
+    .prepare("SELECT expires FROM sessions WHERE csrf=?")
+    .get(session.csrf).expires;
+  assert.ok(initial > Date.now() + 29 * 24 * 3600000);
+  assert.equal(
+    (await request("/me", { session })).cookie,
+    undefined,
+    "a recent session need not write a new cookie on every request",
+  );
+  db.prepare("UPDATE sessions SET expires=? WHERE csrf=?").run(
+    Date.now() + 7 * 3600000,
+    session.csrf,
+  );
+  const refreshed = await request("/me", { session });
+  assert.equal(refreshed.status, 200);
+  assert.ok(refreshed.cookie?.startsWith("sp_session="));
+  const extended = db
+    .prepare("SELECT expires FROM sessions WHERE csrf=?")
+    .get(session.csrf).expires;
+  assert.ok(extended > Date.now() + 29 * 24 * 3600000);
+  assert.equal((await request("/me", { session })).cookie, undefined);
+  db.prepare("UPDATE sessions SET expires=? WHERE csrf=?").run(
+    Date.now() - 1,
+    session.csrf,
+  );
+  assert.equal((await request("/me", { session })).status, 401);
+  assert.ok(
+    db.prepare("SELECT expires FROM sessions WHERE csrf=?").get(session.csrf)
+      .expires < Date.now(),
+  );
+  db.close();
 });

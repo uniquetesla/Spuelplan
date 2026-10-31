@@ -146,6 +146,14 @@ const one = (sql, ...args) => db.prepare(sql).get(...args);
 const run = (sql, ...args) => db.prepare(sql).run(...args);
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const roles = ["admin", "employee", "viewer"];
+const SESSION_LIFETIME = 30 * 24 * 3600000;
+const sessionCookieOptions = (lifetime) => ({
+  httpOnly: true,
+  secure: process.env.COOKIE_SECURE === "true",
+  sameSite: "strict",
+  maxAge: lifetime,
+  path: "/",
+});
 const app = express();
 app.disable("x-powered-by");
 app.use((req, res, next) => {
@@ -210,7 +218,7 @@ const publicUser = (s) => ({
 const openSession = (res, u) => {
   const token = randomBytes(32).toString("hex"),
     csrf = randomBytes(24).toString("hex");
-  const lifetime = u.must_change_password ? 10 * 60000 : 8 * 3600000;
+  const lifetime = u.must_change_password ? 10 * 60000 : SESSION_LIFETIME;
   run("DELETE FROM sessions WHERE expires<?", Date.now());
   run(
     "INSERT INTO sessions VALUES(?,?,?,?)",
@@ -219,13 +227,7 @@ const openSession = (res, u) => {
     csrf,
     Date.now() + lifetime,
   );
-  res.cookie("sp_session", token, {
-    httpOnly: true,
-    secure: process.env.COOKIE_SECURE === "true",
-    sameSite: "strict",
-    maxAge: lifetime,
-    path: "/",
-  });
+  res.cookie("sp_session", token, sessionCookieOptions(lifetime));
   return { user: publicUser({ ...u, user_id: u.id }), csrf };
 };
 const temporaryWords = [
@@ -533,6 +535,32 @@ app.post("/api/login", (req, res) => {
   res.json(auth);
 });
 app.use("/api", requireAuth);
+// Refresh at most daily. Password-change sessions keep their strict ten-minute
+// deadline; logout and password rotation issue their own cookie responses.
+app.use("/api", (req, res, next) => {
+  if (
+    !req.session.must_change_password &&
+    !["/api/logout", "/api/account/password"].includes(
+      req.originalUrl.split("?")[0],
+    ) &&
+    req.session.expires < Date.now() + SESSION_LIFETIME - 24 * 3600000
+  ) {
+    const expires = Date.now() + SESSION_LIFETIME;
+    run(
+      "UPDATE sessions SET expires=? WHERE token=?",
+      expires,
+      req.session.token,
+    );
+    req.session.expires = expires;
+    const token = req.headers.cookie
+      ?.split(";")
+      .map((v) => v.trim())
+      .find((v) => v.startsWith("sp_session="))
+      ?.slice(11);
+    res.cookie("sp_session", token, sessionCookieOptions(SESSION_LIFETIME));
+  }
+  next();
+});
 app.get("/api/me", (req, res) =>
   res.json({ user: publicUser(req.session), csrf: req.session.csrf }),
 );

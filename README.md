@@ -47,7 +47,7 @@ Zeitstempel bleiben intern für Reihenfolge und die Ermittlung der letzten Spül
 ## Sicherheit und Betrieb
 
 - Passwörter: scrypt mit zufälligem individuellem Salt; mindestens 12 Zeichen.
-- Sitzungen: zufällige 256-Bit-Tokens; in der Datenbank nur als SHA-256-Hash; feste Laufzeit von 8 Stunden; HttpOnly- und SameSite=Strict-Cookie.
+- Sitzungen: zufällige 256-Bit-Tokens; in der Datenbank nur als SHA-256-Hash; 30 Tage Gültigkeit, bei Nutzung höchstens einmal täglich wieder auf 30 Tage verlängert; HttpOnly- und SameSite=Strict-Cookie.
 - CSRF-Token und Herkunftsprüfung für schreibende Anfragen, parametrisierte SQL-Abfragen, Content Security Policy, escapte Benutzereingaben.
 - Login-Drosselung nach Konto/IP und insgesamt nach Verbindungs-IP. Hinter einem Reverse Proxy ist die Verbindungs-IP die des Proxys; für größere Installationen zusätzlich am Proxy drosseln.
 - Deaktivierte Benutzer verlieren ihre Sitzungen und Freigaben. Passwort- und Rollenänderungen beenden bestehende Sitzungen. Der eigene Administrationszugang kann sich nicht selbst deaktivieren oder herabstufen.
@@ -147,6 +147,12 @@ Unter **Team & Zugänge → Einstellungen** setzt **Statistik zurücksetzen** na
 
 Die bestehende TX-Characteristic verarbeitet zusätzlich `LIVE;STATUS;ID;DURCHFLUSS;TEMPERATUR;IST_M3;SOLL_M3;PROZENT;RESTZEIT_SEKUNDEN`. Durchfluss und Temperatur erscheinen schon ohne Auftrag; während der Messung kommen Fortschrittsbalken, Mengen und geschätzte Restzeit hinzu. Werte veralten nach fünf Sekunden und werden bei Bluetooth-Trennung sofort ausgeblendet. Der ESP32 misst autonom weiter.
 
-READY fordert automatisch das vollständige GET-Ergebnis an und speichert über die bisherige idempotente Serverlogik, sobald die Trübung ausdrücklich ausgewählt ist. Ohne Trübungsangabe bleibt die Messung zur Ergänzung offen. ACK wird ausschließlich nach bestätigter Serverspeicherung gesendet. Die vorhandenen UUIDs, Datenbankstrukturen, Messabbruch und manuellen Wiederholungswege bleiben erhalten. Details zu vollständigen Telegrammen, MTU-Grenzen von Web Bluetooth und TX Read stehen im [BLE-Vertrag](docs/esp32-ble.md).
+READY fordert automatisch das vollständige GET-Ergebnis an und speichert über die bisherige idempotente Serverlogik, mit der Trübungsangabe (standardmäßig **Nein – keine Trübung**). Ohne Trübungsangabe bleibt die Messung zur Ergänzung offen. ACK wird ausschließlich nach bestätigter Serverspeicherung gesendet. Die vorhandenen UUIDs, Datenbankstrukturen, Messabbruch und manuellen Wiederholungswege bleiben erhalten. Details zu vollständigen Telegrammen, MTU-Grenzen von Web Bluetooth und TX Read stehen im [BLE-Vertrag](docs/esp32-ble.md).
 
 Spülpunkte lassen sich über die gesamte Tabellenzeile öffnen, per Antippen/Klick sowie mit Enter oder Leertaste. Berechtigungen bleiben unverändert; vorhandene Zeilenbuttons behalten ihre eigene Funktion.
+
+### Zeilenfarben und dauerhafte Anmeldung
+
+Spülpunkte sind während der Erfassung bzw. eines offenen lokalen ESP32-Auftrags gelb, nach gespeicherter Bearbeitung grün und bei einer offenen internen Bemerkung rot. Rot hat Vorrang. Nach Quittierung einer Bemerkung gilt wieder der normale Bearbeitungsstatus. Die Trübung ist bei neuen Messungen mit **Nein – keine Trübung** vorbelegt; eine vorhandene Auswahl für einen offenen Auftrag bleibt erhalten.
+
+Normale Anmeldungen verwenden ein persistentes Cookie mit 30 Tagen Gültigkeit. Bei Nutzung wird die Laufzeit höchstens einmal täglich erneut auf 30 Tage verlängert. Nach 30 Tagen ohne Zugriff ist eine neue Anmeldung nötig. Abmeldung, Passwortänderung, Passwortreset und Kontosperrung widerrufen Sitzungen weiterhin; Sitzungen für den erzwungenen Wechsel eines Einmalpassworts bleiben auf zehn Minuten begrenzt und werden nicht verlängert.
