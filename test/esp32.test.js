@@ -390,3 +390,150 @@ test("Bestätigter Neustart desselben Punktes wartet auf echten Abbruch und bewa
   assert.equal(g.state.led, true);
   assert.equal(g.state.commands.filter((c) => c === "SP-1024;2.5").length, 1);
 });
+
+test("LIVE validiert alle neun Felder, Leerlauf, Fehler und Restzeit ohne Ergebniswerte zu erfinden", () => {
+  const live = parseMessage(
+    "LIVE;MEASURING;SP-1024;4.5;12.45;1.25;2.5;50;1000",
+  );
+  assert.deepEqual(live, {
+    type: "live",
+    state: "MEASURING",
+    code: "SP-1024",
+    flow: 4.5,
+    temperature: 12.45,
+    volume: 1.25,
+    target: 2.5,
+    percent: 50,
+    remaining: 1000,
+  });
+  assert.equal(parseMessage("LIVE;IDLE;;0;13.2;0;0;0;-1").code, null);
+  assert.equal(parseMessage("LIVE;IDLE;-;0;13.2;0;0;0;-1").remaining, -1);
+  assert.equal(
+    parseMessage("LIVE;ERROR;SP-1024;0;13;1;2.5;40;-1").state,
+    "ERROR",
+  );
+  assert.equal(parseMessage("STATUS;ERROR;SP-1024").state, "ERROR");
+  for (const frame of [
+    "LIVE;MEASURING;SP-1024;4.5;12;1;2.5;40",
+    "LIVE;MEASURING;SP-1024;4.5;12;1;2.5;40;1;EXTRA",
+    "LIVE;UNKNOWN;SP-1024;4.5;12;1;2.5;40;1",
+    "LIVE;MEASURING;;4.5;12;1;2.5;40;1",
+    "LIVE;MEASURING;SP-1024;NaN;12;1;2.5;40;1",
+    "LIVE;MEASURING;SP-1024;-1;12;1;2.5;40;1",
+    "LIVE;MEASURING;SP-1024;1;-127;1;2.5;40;1",
+    "LIVE;MEASURING;SP-1024;1;12;1;0;40;1",
+    "LIVE;MEASURING;SP-1024;1;12;1;2.5;101;1",
+    "LIVE;MEASURING;SP-1024;1;12;1;2.5;40;-2",
+    "LIVE;MEASURING;SP-1024;1;12;1;2.5;40;1\nNONE",
+    "LIVE;MEASURING;" + "x".repeat(513),
+  ])
+    assert.throws(() => parseMessage(frame), frame);
+});
+
+test("Live-Daten laufen ohne Auftrag, veralten und verschwinden bei echter Trennung", async (t) => {
+  const f = fake();
+  await f.client.connect();
+  const notify = (text) => {
+    f.tx.value = new DataView(new TextEncoder().encode(text).buffer);
+    f.tx.dispatchEvent(new Event("characteristicvaluechanged"));
+  };
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  notify("LIVE;IDLE;;1.2;14.2;0;0;0;-1");
+  assert.equal(f.client.live.flow, 1.2);
+  assert.equal(f.client.job, null);
+  assert.equal(
+    f.client.transport.mtu,
+    null,
+    "Web Bluetooth does not expose negotiated MTU",
+  );
+  assert.ok(f.client.transport.maxNotificationBytes > 20);
+  t.mock.timers.tick(5001);
+  assert.equal(f.client.live, null);
+  notify("LIVE;MEASURING;SP-1024;4;14;1;2.5;40;1350");
+  f.client.device.gatt.disconnect();
+  assert.equal(f.client.live, null);
+  assert.equal(f.client.deviceStatus, null);
+  notify("LIVE;MEASURING;SP-1024;4;14;1.5;2.5;60;900");
+  assert.equal(
+    f.client.live,
+    null,
+    "late notifications must not revive disconnected values",
+  );
+});
+
+test("LIVE stört weder GET noch ACK; abgeschnittene Telemetrie verwirft keine Messung", async () => {
+  const f = fake({ dropGet: true });
+  await f.client.connect();
+  await f.client.startMeasurement(point, runId);
+  f.complete();
+  const notify = (text) => {
+    f.tx.value = new DataView(new TextEncoder().encode(text).buffer);
+    f.tx.dispatchEvent(new Event("characteristicvaluechanged"));
+  };
+  const getting = f.client.exchange(point, runId);
+  notify("LIVE;READY;SP-1024;4;12.4;2.5;2.5;100;0");
+  assert.ok(f.client.waiting);
+  notify("LIVE;READY;SP-1024;4;12.4;2.5");
+  assert.ok(
+    f.client.waiting,
+    "malformed telemetry cannot reject a result request",
+  );
+  assert.equal(f.client.live, null);
+  const values = await getting;
+  assert.equal(values.temperature_before, 12.45);
+  assert.equal(
+    f.state.commands.some((c) => c.startsWith("ACK;")),
+    false,
+  );
+  f.state.serverSaved = true;
+  await f.client.acknowledge(f.receipt());
+  assert.equal(f.client.job, null);
+});
+
+test("Abgeschnittenes GET-Telegramm verwendet vollständiges TX Read; unvollständiges Read erzeugt kein Ergebnis", async () => {
+  const f = fake();
+  await f.client.connect();
+  await f.client.startMeasurement(point, runId);
+  f.state.frame = "SP-1024;2.500;12.45;9.82";
+  const write = f.rx.writeValueWithResponse;
+  f.rx.writeValueWithResponse = async (bytes) => {
+    if (new TextDecoder().decode(bytes) === "GET") {
+      f.tx.value = new DataView(
+        new TextEncoder().encode("SP-1024;2.500;12.").buffer,
+      );
+      f.tx.dispatchEvent(new Event("characteristicvaluechanged"));
+    } else await write(bytes);
+  };
+  assert.equal((await f.client.exchange(point, runId)).temperature_after, 9.82);
+  f.tx.readValue = async () =>
+    new DataView(new TextEncoder().encode("SP-1024;2.500;12.").buffer);
+  await assert.rejects(() => f.client.exchange(point, runId));
+  assert.equal(
+    f.state.commands.some((c) => c.startsWith("ACK;")),
+    false,
+  );
+  f.client.disconnect();
+});
+
+test("Auch ein numerisch plausibel abgeschnittenes Ergebnis wird vor Speicherung mit TX Read verglichen", async () => {
+  const f = fake();
+  await f.client.connect();
+  await f.client.startMeasurement(point, runId);
+  f.state.frame = "SP-1024;2.500;12.45;9.82";
+  const write = f.rx.writeValueWithResponse;
+  f.rx.writeValueWithResponse = async (bytes) => {
+    if (new TextDecoder().decode(bytes) === "GET") {
+      f.tx.value = new DataView(
+        new TextEncoder().encode("SP-1024;2.500;12.45;9").buffer,
+      );
+      f.tx.dispatchEvent(new Event("characteristicvaluechanged"));
+    } else await write(bytes);
+  };
+  await assert.rejects(() => f.client.exchange(point, runId), /TX Read/);
+  assert.equal(f.client.job.received, false);
+  assert.equal(
+    f.state.commands.some((c) => c.startsWith("ACK;")),
+    false,
+  );
+  f.client.disconnect();
+});

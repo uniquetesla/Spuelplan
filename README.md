@@ -142,3 +142,11 @@ In der Detailansicht unter **Spülprotokolle** kann die Administration einzelne 
 Löschungen werden dauerhaft mit Zeitpunkt und Administrator markiert. Gelöschte Daten verschwinden aus Listen, Protokollen, Ausdrucken, internen Hinweisen und Statistik. Alte ESP32-Übertragungen können gelöschte Protokolle nicht wiederherstellen und erhalten keine Speicherbestätigung mehr.
 
 Unter **Team & Zugänge → Einstellungen** setzt **Statistik zurücksetzen** nach Eingabe von `STATISTIK ZURÜCKSETZEN` die gezählten Spülungen und gespülten m³ für alle Benutzer zurück. Neue Messungen zählen ab diesem Zeitpunkt wieder. Protokolle, Listenvorlagen, Spülpunkte und deren Bearbeitungsstand bleiben erhalten. Der Reset wird über eine dauerhafte Messungs-ID-Grenze gespeichert und bleibt nach Serverneustart bestehen; die jeweiligen Rollen- und Freigabebeschränkungen gelten weiter.
+
+### ESP32 Live-Anzeige
+
+Die bestehende TX-Characteristic verarbeitet zusätzlich `LIVE;STATUS;ID;DURCHFLUSS;TEMPERATUR;IST_M3;SOLL_M3;PROZENT;RESTZEIT_SEKUNDEN`. Durchfluss und Temperatur erscheinen schon ohne Auftrag; während der Messung kommen Fortschrittsbalken, Mengen und geschätzte Restzeit hinzu. Werte veralten nach fünf Sekunden und werden bei Bluetooth-Trennung sofort ausgeblendet. Der ESP32 misst autonom weiter.
+
+READY fordert automatisch das vollständige GET-Ergebnis an und speichert über die bisherige idempotente Serverlogik, sobald die Trübung ausdrücklich ausgewählt ist. Ohne Trübungsangabe bleibt die Messung zur Ergänzung offen. ACK wird ausschließlich nach bestätigter Serverspeicherung gesendet. Die vorhandenen UUIDs, Datenbankstrukturen, Messabbruch und manuellen Wiederholungswege bleiben erhalten. Details zu vollständigen Telegrammen, MTU-Grenzen von Web Bluetooth und TX Read stehen im [BLE-Vertrag](docs/esp32-ble.md).
+
+Spülpunkte lassen sich über die gesamte Tabellenzeile öffnen, per Antippen/Klick sowie mit Enter oder Leertaste. Berechtigungen bleiben unverändert; vorhandene Zeilenbuttons behalten ihre eigene Funktion.

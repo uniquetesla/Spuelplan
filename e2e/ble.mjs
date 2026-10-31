@@ -179,6 +179,8 @@ try {
     window.__ble = {
       state,
       commands,
+      notify,
+      disconnect: () => device.gatt.disconnect(),
       complete: (frame = "SP-BLE;2.500;12.45;9.82") => {
         state.frame = frame;
         state.status = "STATUS;READY;" + frame.split(";")[0];
@@ -222,7 +224,8 @@ try {
   await page.getByRole("button", { name: "Anmelden", exact: true }).click();
   await page.getByRole("link", { name: /BLE-Testliste/ }).click();
   await page
-    .getByRole("button", { name: "Spülung erfassen", exact: true })
+    .locator('tr[data-action="select-point"]')
+    .getByText("64646 Heppenheim", { exact: true })
     .click();
   await expect(
     page.getByRole("button", {
@@ -239,6 +242,17 @@ try {
       exact: true,
     }),
   ).toBeEnabled();
+  await page.evaluate(() =>
+    window.__ble.notify("LIVE;IDLE;;1.25;14.2;0;0;0;-1"),
+  );
+  await expect(page.locator('[data-live="flow"]')).toContainText("1,25");
+  await expect(page.locator('[data-live="temperature"]')).toContainText("14,2");
+  await page.evaluate(() => window.__ble.disconnect());
+  await expect(page.locator('[data-live="flow"]')).toContainText("—");
+  await expect(page.locator('[data-live="temperature"]')).toContainText("—");
+  await page
+    .getByRole("button", { name: "Bluetooth verbinden", exact: true })
+    .click();
   await page
     .getByRole("button", { name: "Spülpunkt an ESP32 senden", exact: true })
     .click();
@@ -303,6 +317,31 @@ try {
   await expect(
     page.getByRole("button", { name: "Messdaten abrufen", exact: true }),
   ).toBeEnabled();
+  await page.evaluate(() =>
+    window.__ble.notify("LIVE;MEASURING;SP-BLE;4.5;12.4;1.25;2.5;50;1000"),
+  );
+  await expect(
+    page.getByRole("progressbar", { name: "Spülfortschritt" }),
+  ).toHaveAttribute("aria-valuenow", "50");
+  await expect(page.locator('[data-live="volume"]')).toHaveText(
+    "1,25 / 2,5 m³",
+  );
+  await expect(page.locator('[data-live="remaining"]')).toHaveText(
+    "16 Min. 40 Sek.",
+  );
+  await page.evaluate(() =>
+    window.__ble.notify("LIVE;WAIT_FLOW;SP-BLE;0;12.4;1.25;2.5;50;-1"),
+  );
+  await expect(page.locator('[data-live="remaining"]')).toHaveText(
+    "Nicht berechenbar",
+  );
+  await page.evaluate(() =>
+    window.__ble.notify("LIVE;ERROR;SP-BLE;0;12.4;1.25;2.5;50;-1"),
+  );
+  await expect(page.locator(".ble-status")).toContainText("Messfehler");
+  await page.evaluate(() => window.__ble.notify("LIVE;MEASURING;SP-BLE;4"));
+  await expect(page.locator('[data-live="flow"]')).toContainText("—");
+  assert.equal(attempts, 0);
   await page.evaluate(() => window.__ble.complete("FREMD;2.500;12.45;9.82"));
   await page
     .getByRole("button", { name: "Messdaten abrufen", exact: true })
@@ -311,10 +350,13 @@ try {
   await expect(
     page.getByLabel("Temperatur vorher · °C", { exact: true }),
   ).toHaveValue("");
-  await page.evaluate(() => window.__ble.complete());
-  await page
-    .getByRole("button", { name: "Messdaten abrufen", exact: true })
-    .click();
+  await page.evaluate(() => {
+    window.__ble.state.frame = "SP-BLE;2.500;12.45;9.82";
+    window.__ble.state.status = "STATUS;READY;SP-BLE";
+    window.__ble.state.led = true;
+    for (let i = 0; i < 5; i++)
+      window.__ble.notify("LIVE;READY;SP-BLE;4.5;9.82;2.5;2.5;100;0");
+  });
   await expect(
     page.getByLabel("Temperatur vorher · °C", { exact: true }),
   ).toHaveValue("12.45");
@@ -327,13 +369,13 @@ try {
   await page
     .getByLabel("Trübung festgestellt?", { exact: true })
     .selectOption("false");
-  await page.screenshot({ path: "/tmp/spuelpilot-ble.png", fullPage: true });
-  await page
-    .getByRole("button", { name: "Spülung speichern", exact: true })
-    .click();
-  await expect(page.locator("#modal-error")).toContainText(
-    "Test-Speicherfehler",
+  await expect(page.locator(".ble-error")).toContainText("Test-Speicherfehler");
+  assert.equal(
+    attempts,
+    1,
+    "READY triggers one automatic save, repeated telemetry must not duplicate it",
   );
+  await page.screenshot({ path: "/tmp/spuelpilot-ble.png", fullPage: true });
   assert.equal(
     await page.evaluate(() =>
       window.__ble.commands.some((c) => c.startsWith("ACK;")),
@@ -420,6 +462,125 @@ try {
   );
   assert.equal(commands.filter((c) => c === "SP-BLE;2.5").length, 3);
   assert.equal(commands.filter((c) => c === "ACK;SP-BLE").length, 1);
+  // A second run completes autonomously while disconnected. The existing job
+  // metadata supplies the explicitly chosen turbidity, never a guessed default.
+  assert.equal(
+    (
+      await admin.post(`/api/lists/${list.id}/publish`, { headers, data: {} })
+    ).status(),
+    200,
+  );
+  assert.equal(
+    (
+      await admin.post(`/api/lists/${list.id}/restart`, {
+        headers,
+        data: { user_ids: [2] },
+      })
+    ).status(),
+    201,
+  );
+  await page.unroute(`**/api/points/${point.id}/flushes`);
+  let automaticPosts = 0;
+  await page.route(`**/api/points/${point.id}/flushes`, async (route) => {
+    automaticPosts++;
+    const response = await route.fetch();
+    assert.equal(response.status(), 201);
+    await page.evaluate(() =>
+      sessionStorage.setItem("__server_confirmed", "true"),
+    );
+    await route.fulfill({ response });
+  });
+  await page.goto(base + "/#/lists/" + list.id);
+  const row = page.locator('tr[data-action="select-point"]');
+  await row.focus();
+  await row.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Spülung dokumentieren", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Trübung festgestellt?", { exact: true })
+    .selectOption("true");
+  await page
+    .getByLabel("Interne Bemerkung", { exact: false })
+    .fill("Interner Sensorhinweis");
+  await page
+    .getByRole("button", { name: "Spülpunkt an ESP32 senden", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Messdaten abrufen", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Schließen", exact: true }).click();
+  await page.goto(base + "/#/devices");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() =>
+    window.__ble.notify("LIVE;MEASURING;SP-BLE;4.5;12.4;1.25;2.5;50;1000"),
+  );
+  await expect(page.locator('[data-live="percent"]:visible')).toHaveText(
+    "50 %",
+  );
+  await page.screenshot({
+    path: "/tmp/spuelpilot-live-mobile.png",
+    fullPage: true,
+  });
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > innerWidth,
+    ),
+    false,
+  );
+  await page.evaluate(() => {
+    window.__ble.disconnect();
+    window.__ble.state.dropAck = false;
+    window.__ble.state.frame = "SP-BLE;2.500;12.45;9.82";
+    window.__ble.state.status = "STATUS;READY;SP-BLE";
+    window.__ble.state.led = true;
+    sessionStorage.removeItem("__server_confirmed");
+    window.__ble.notify("LIVE;READY;SP-BLE;4.5;9.82;2.5;2.5;100;0");
+  });
+  await expect(page.locator('[data-live="flow"]')).toContainText("—");
+  assert.equal(automaticPosts, 0);
+  await page
+    .getByRole("button", { name: "Bluetooth verbinden", exact: true })
+    .click();
+  await expect.poll(() => automaticPosts).toBe(1);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => window.__ble.commands.filter((c) => c === "ACK;SP-BLE").length,
+      ),
+    )
+    .toBe(2);
+  await expect
+    .poll(async () =>
+      (await (await admin.get("/api/flushes")).json()).filter(
+        (f) => f.point_id === point.id,
+      ),
+    )
+    .toHaveLength(2);
+  const allRecords = await (await admin.get("/api/flushes")).json();
+  const secondRecord = allRecords.find(
+    (f) => f.point_id === point.id && f.run_number === 2,
+  );
+  assert.equal(secondRecord.turbidity, 1);
+  assert.equal(secondRecord.temperature_after, 9.82);
+  const notes = await (await admin.get("/api/internal-notes")).json();
+  assert.ok(
+    notes.some(
+      (n) => n.content === "Interner Sensorhinweis" && n.run_number === 2,
+    ),
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Object.keys(localStorage).filter((k) =>
+          k.startsWith("spuelpilot.ble-job."),
+        ),
+      ),
+    )
+    .toEqual([]);
+  console.log(
+    "PASS: Live im Leerlauf, Fortschritt, Restzeit, Fehler und mobile Anzeige; READY ruft automatisch ab, speichert einmalig und bestätigt erst nach Servererfolg; autonome Messung nach Trennung wird korrekt wiederaufgenommen.",
+  );
   assert.deepEqual(errors, []);
   console.log(
     "PASS: Bestätigter Messabbruch über ID;0 ohne Protokoll, BLE-Button, exakte UUIDs und Telegramme, Notify-Import mit zwei Dezimalstellen, falsche ID, Speicherfehler ohne ACK, verlorene Serverantwort ohne Dublette, ACK erst nach Servererfolg und wiederaufnehmbare Bestätigung nach Browserneustart.",
