@@ -1654,3 +1654,368 @@ test("Normale Anmeldung bleibt 30 Tage bestehen und verlängert sich bei Nutzung
   );
   db.close();
 });
+
+test("Durchflussmessungen bleiben intern, gehören Mitarbeitern und speichern eine vollständige Kurve ohne Temperaturen", async () => {
+  const employeeSession = await login("employee@example.de"),
+    viewerSession = await login("other@example.de");
+  await request("/users", {
+    session: admin,
+    body: {
+      name: "Durchfluss Kollege",
+      email: "flow-colleague@example.de",
+      role: "employee",
+      password,
+    },
+  });
+  const colleague = await login("flow-colleague@example.de");
+  const body = {
+    address: "Teststraße 10, Heppenheim",
+    remark: "Nur intern sichtbar",
+    request_id: crypto.randomUUID(),
+  };
+  const started = await request("/flow-measurements", {
+    session: employeeSession,
+    body,
+  });
+  assert.equal(started.status, 201);
+  const id = started.data.id;
+  assert.equal(started.data.status, "active");
+  assert.equal(started.data.last_seq, -1);
+  assert.equal(
+    (await request("/flow-measurements", { session: employeeSession, body }))
+      .data.id,
+    id,
+  );
+  assert.equal(
+    (
+      await request("/flow-measurements", {
+        session: employeeSession,
+        body: { ...body, request_id: crypto.randomUUID() },
+      })
+    ).status,
+    409,
+  );
+  for (const [path, method, payload] of [
+    ["/flow-measurements", "GET"],
+    ["/flow-measurements", "POST", body],
+    [`/flow-measurements/${id}`, "GET"],
+    [`/flow-measurements/${id}/series`, "GET"],
+    [`/flow-measurements/${id}`, "PUT", body],
+    [
+      `/flow-measurements/${id}/samples`,
+      "POST",
+      { samples: [{ seq: 0, elapsed_ms: 0, flow: 2 }] },
+    ],
+    [`/flow-measurements/${id}/finish`, "POST", { last_seq: -1 }],
+    [`/flow-measurements/${id}`, "DELETE", { confirm_address: body.address }],
+  ])
+    assert.equal(
+      (await request(path, { session: viewerSession, method, body: payload }))
+        .status,
+      403,
+    );
+  assert.equal(
+    (await request(`/flow-measurements/${id}`, { session: colleague })).status,
+    404,
+  );
+  assert.equal(
+    (await request(`/flow-measurements/${id}/series`, { session: colleague }))
+      .status,
+    404,
+  );
+  assert.deepEqual(
+    (await request("/flow-measurements", { session: colleague })).data,
+    [],
+  );
+  assert.equal(
+    (await request(`/flow-measurements/${id}`, { session: admin })).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}/samples`, {
+        session: admin,
+        body: { samples: [{ seq: 0, elapsed_ms: 0, flow: 2 }] },
+      })
+    ).status,
+    403,
+  );
+  const samples = [
+    { seq: 0, elapsed_ms: 0, flow: 0 },
+    { seq: 1, elapsed_ms: 1000, flow: 4.5 },
+    { seq: 2, elapsed_ms: 20000, flow: 8 },
+  ];
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}/samples`, {
+        session: employeeSession,
+        body: { samples },
+        csrf: false,
+      })
+    ).status,
+    403,
+  );
+  for (const invalid of [
+    [],
+    [{ seq: 0, elapsed_ms: 0, flow: -1 }],
+    [{ seq: 0, elapsed_ms: 0, flow: "2" }],
+    [{ seq: 0, elapsed_ms: 1e12, flow: 2 }],
+    [{ seq: 2, elapsed_ms: 0, flow: 2 }],
+  ])
+    assert.ok(
+      [400, 409].includes(
+        (
+          await request(`/flow-measurements/${id}/samples`, {
+            session: employeeSession,
+            body: { samples: invalid },
+          })
+        ).status,
+      ),
+    );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}/samples`, {
+        session: employeeSession,
+        body: { samples },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}/samples`, {
+        session: employeeSession,
+        body: { samples },
+      })
+    ).data.sample_count,
+    3,
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}/samples`, {
+        session: employeeSession,
+        body: { samples: [{ ...samples[0], flow: 99 }] },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}/samples`, {
+        session: employeeSession,
+        body: {
+          samples: [
+            { seq: 3, elapsed_ms: 21000, flow: 2 },
+            { seq: 5, elapsed_ms: 22000, flow: 3 },
+          ],
+        },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (await request(`/flow-measurements/${id}`, { session: employeeSession }))
+      .data.sample_count,
+    3,
+    "a rejected batch must roll back atomically",
+  );
+  const series = (
+    await request(`/flow-measurements/${id}/series`, {
+      session: employeeSession,
+    })
+  ).data;
+  assert.deepEqual(
+    series.map((p) => p.flow),
+    [0, 4.5, 8],
+  );
+  assert.equal(series[2].segment, 1);
+  assert.equal("temperature" in series[0], false);
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}/finish`, {
+        session: employeeSession,
+        body: { last_seq: 1 },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}`, {
+        session: employeeSession,
+        method: "DELETE",
+        body: { confirm_address: body.address },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}`, {
+        session: employeeSession,
+        method: "PUT",
+        body: { address: body.address, remark: "x".repeat(2001) },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}`, {
+        session: employeeSession,
+        method: "PUT",
+        body: { address: body.address, remark: "Korrigierte Bemerkung" },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}/finish`, {
+        session: employeeSession,
+        body: { last_seq: 2 },
+      })
+    ).data.status,
+    "completed",
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}/finish`, {
+        session: employeeSession,
+        body: { last_seq: 2 },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}/samples`, {
+        session: employeeSession,
+        body: { samples },
+      })
+    ).status,
+    200,
+    "replay after a lost save response remains idempotent",
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}/samples`, {
+        session: employeeSession,
+        body: { samples: [{ seq: 3, elapsed_ms: 21000, flow: 2 }] },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    JSON.stringify((await records(viewerSession)).data).includes(body.address),
+    false,
+  );
+  await stop(child);
+  const restarted = await start(join(dir, "test.sqlite"));
+  child = restarted.process;
+  base = restarted.base;
+  assert.deepEqual(
+    (
+      await request(`/flow-measurements/${id}/series`, {
+        session: employeeSession,
+      })
+    ).data,
+    series,
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}`, {
+        session: employeeSession,
+        method: "DELETE",
+        body: { confirm_address: "Falsch" },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}`, {
+        session: employeeSession,
+        method: "DELETE",
+        body: { confirm_address: body.address },
+        csrf: false,
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}`, {
+        session: employeeSession,
+        method: "DELETE",
+        body: { confirm_address: body.address },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}/series`, {
+        session: employeeSession,
+      })
+    ).status,
+    404,
+  );
+  assert.equal(
+    (await request("/flow-measurements", { session: employeeSession, body }))
+      .status,
+    409,
+  );
+});
+
+test("Lange Durchflussmessungen behalten alle Rohwerte; die Diagrammansicht begrenzt nur die Anzeige und bewahrt Spitzen", async () => {
+  const employeeSession = await login("employee@example.de");
+  const id = (
+    await request("/flow-measurements", {
+      session: employeeSession,
+      body: { address: "Langzeitkurve", request_id: crypto.randomUUID() },
+    })
+  ).data.id;
+  const db = new DatabaseSync(join(dir, "test.sqlite"));
+  db.prepare("UPDATE flow_measurements SET started_at=? WHERE id=?").run(
+    new Date(Date.now() - 3600000).toISOString(),
+    id,
+  );
+  db.close();
+  const samples = Array.from({ length: 2401 }, (_, seq) => ({
+    seq,
+    elapsed_ms: seq * 1000,
+    flow: seq === 777 ? 900000 : seq % 20,
+  }));
+  for (let i = 0; i < samples.length; i += 200)
+    assert.equal(
+      (
+        await request(`/flow-measurements/${id}/samples`, {
+          session: employeeSession,
+          body: { samples: samples.slice(i, i + 200) },
+        })
+      ).status,
+      200,
+    );
+  const summary = (
+    await request(`/flow-measurements/${id}`, { session: employeeSession })
+  ).data;
+  assert.equal(summary.sample_count, 2401);
+  const series = (
+    await request(`/flow-measurements/${id}/series`, {
+      session: employeeSession,
+    })
+  ).data;
+  assert.ok(series.length <= 1000);
+  assert.ok(series.some((p) => p.flow === 900000));
+  assert.equal(series.at(-1).seq, 2400);
+  assert.equal(
+    (
+      await request(`/flow-measurements/${id}/finish`, {
+        session: employeeSession,
+        body: { last_seq: 2400 },
+      })
+    ).data.status,
+    "completed",
+  );
+});

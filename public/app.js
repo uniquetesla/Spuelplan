@@ -1,3 +1,5 @@
+import { FlowRecorder } from "./flow-recorder.js";
+import { flowChart as renderFlowChart, flowDuration } from "./flow-chart.js";
 import { Esp32Client, STATUS_LABELS } from "./esp32.js";
 const icons = {
   drop: '<path d="M12 3s-6.5 7.1-6.5 11.2a6.5 6.5 0 0 0 13 0C18.5 10.1 12 3 12 3Z"/><path d="M9 15a3 3 0 0 0 3 3"/>',
@@ -75,7 +77,10 @@ let user,
   points = [],
   currentList,
   status,
-  loadVersion = 0;
+  loadVersion = 0,
+  flowRecords = [],
+  flowDetail = null,
+  flowSeries = [];
 const app = document.querySelector("#app"),
   modal = document.querySelector("#modal");
 let bleStorage = null;
@@ -83,6 +88,52 @@ try {
   bleStorage = window.localStorage;
 } catch {}
 const ble = new Esp32Client({ storage: bleStorage });
+async function flowRequest(path, body, method = "GET") {
+  try {
+    return await api(path, {
+      method,
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch (error) {
+    if (error instanceof TypeError || error.name === "TimeoutError")
+      throw Error(
+        "Server momentan nicht erreichbar. Messwerte bleiben lokal gesichert.",
+      );
+    throw error;
+  }
+}
+const flowRecorder = new FlowRecorder({ request: flowRequest });
+function flowChart(points) {
+  return renderFlowChart(points, {
+    width: window.innerWidth < 650 ? 420 : 800,
+  });
+}
+let flowResize;
+window.addEventListener("resize", () => {
+  clearTimeout(flowResize);
+  flowResize = setTimeout(updateFlowPanels, 200);
+});
+flowRecorder.addEventListener("change", () => updateFlowPanels());
+ble.addEventListener("message", (event) => {
+  if (
+    event.message.type === "live" &&
+    ble.connected &&
+    user?.id === flowRecorder.ownerId
+  )
+    flowRecorder.capture(event.message);
+});
+window.addEventListener("beforeunload", (event) => {
+  if (
+    flowRecorder.active &&
+    (flowRecorder.running ||
+      flowRecorder.pending ||
+      flowRecorder.active.stopping)
+  ) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
 let activeBleForm = null;
 let completedMeasurement = null,
   bleDraft = null,
@@ -101,6 +152,7 @@ ble.addEventListener("change", () => {
   updateBlePanels();
   syncBleForm();
   refreshPointStates();
+  updateFlowPanels();
   queueMicrotask(processReadyMeasurement);
 });
 const isAdmin = () => user?.role === "admin";
@@ -149,6 +201,8 @@ function brand() {
   return `<div class="brand"><span class="brand-icon">${icon("drop")}</span><span>SpülPilot<small>Stadtwerke Heppenheim</small></span></div>`;
 }
 function renderAuth() {
+  void flowRecorder.bindUser(null);
+
   ble.bindUser(null);
   app.innerHTML = `<div class="auth"><section class="auth-art">${brand()}<div class="auth-art-main">${icon("drop", "big-drop")}<h1>Unser Wassernetz.<br>Gemeinsam im Blick.</h1><p>Das interne Spülmanagement der Stadtwerke Heppenheim. Ausschließlich für berechtigte Beschäftigte und freigegebene Betrachter.</p></div><div class="auth-art-foot">Stadtwerke Heppenheim · Interner, geschützter Arbeitsbereich</div></section><section class="auth-right"><form class="auth-form" id="auth-form"><div class="login-role">${status.setupRequired ? "Erste Schritte" : "Dein digitaler SpülPilot"}</div><h2>${status.setupRequired ? "Willkommen an Bord." : "Schön, dass du da bist."}</h2><p>${status.setupRequired ? "Richte dein Administrationskonto ein, um Spüllisten und dein Team zu verwalten." : "Melde dich an und bring dein Wassernetz in Bewegung."}</p><div class="form-error" id="auth-error" role="alert"></div>${status.setupRequired ? '<div class="field"><label for="setup-token">Einrichtungsschlüssel</label><input id="setup-token" name="setup_token" type="password" required autocomplete="off"><small>Auf dem Server in data/setup-token hinterlegt.</small></div><div class="field"><label for="name">Dein Name</label><input id="name" name="name" required maxlength="100" autocomplete="name" placeholder="Vor- und Nachname"></div>' : ""}<div class="field"><label for="email">E-Mail-Adresse</label><input id="email" name="email" type="email" required autocomplete="username" maxlength="200" placeholder="name@unternehmen.de"></div><div class="field"><label for="password">Passwort</label><input id="password" name="password" type="password" required ${status.setupRequired ? 'minlength="12"' : ""} maxlength="128" autocomplete="${status.setupRequired ? "new-password" : "current-password"}" placeholder="${status.setupRequired ? "Mindestens 12 Zeichen" : "Dein Passwort"}"></div><button class="button" type="submit">${status.setupRequired ? "Administrationskonto erstellen" : "Anmelden"}${icon("arrow")}</button><div class="auth-security">${icon("lock")}Nur für berechtigte Personen · Keine öffentliche Registrierung</div>${status.demo && !status.setupRequired ? '<div class="auth-demo"><strong>Demo mit Beispieldaten</strong><br>Wähle eine Rolle. Das Demo-Passwort wurde beim Start festgelegt.<div><button type="button" data-demo="admin@spuelplan.local">Administration</button><button type="button" data-demo="lena@spuelplan.local">Mitarbeiter</button><button type="button" data-demo="betrachter@spuelplan.local">Betrachter</button></div></div>' : ""}</form></section></div>`;
   document.querySelectorAll("[data-demo]").forEach(
@@ -187,7 +241,12 @@ const navItems = () => [
   ["overview", "Übersicht", "grid"],
   ["lists", "Spüllisten", "folder"],
   ["reports", "Spülprotokolle", "file"],
-  ...(user.role !== "viewer" ? [["notes", "Interne Hinweise", "info"]] : []),
+  ...(user.role !== "viewer"
+    ? [
+        ["flow", "Durchflussmessung", "wave"],
+        ["notes", "Interne Hinweise", "info"],
+      ]
+    : []),
   ...(isAdmin() ? [["users", "Team & Zugänge", "users"]] : []),
   ...(user.role !== "viewer"
     ? [["devices", "Geräte & Sensoren", "bluetooth"]]
@@ -196,7 +255,7 @@ const navItems = () => [
 ];
 function layout(content, section) {
   const nav = navItems();
-  app.innerHTML = `<div class="shell"><div class="menu-backdrop" data-action="menu"></div><aside class="sidebar">${brand()}<div class="nav-label">Arbeitsbereich</div><nav class="nav" aria-label="Hauptnavigation">${nav.map(([id, label, ic]) => `<a href="#/${id}" class="${section === id ? "active" : ""}" ${section === id ? 'aria-current="page"' : ""}>${icon(ic)}${label}${id === "lists" ? `<span class="count">${lists.length}</span>` : id === "notes" && notes.length ? `<span class="count issue-count">${new Set(notes.map((n) => n.point_id)).size}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="water-note">${icon("wave")}<h4>Jeder Tropfen zählt.</h4><p>Spülmanagement für das Trinkwassernetz der Stadtwerke Heppenheim.</p></div><div class="user"><div class="avatar">${esc(initials(user.name))}</div><div><strong>${esc(user.name)}</strong><small>${roleName[user.role]}</small></div><button class="logout" data-action="logout" title="Abmelden" aria-label="Abmelden">${icon("logout")}</button></div></div></aside><main class="main"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-action="menu" aria-label="Menü öffnen">${icon("menu")}</button>Arbeitsbereich ${icon("chevron")} <strong>${nav.find((x) => x[0] === section)?.[1] || "Spüllisten"}</strong></div><div class="top-right"><span class="system"><i class="dot"></i>Mit Datenbank verbunden</span><span class="top-date">${new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span><div class="avatar">${esc(initials(user.name))}</div></div></header><div class="content">${status.demo ? '<div class="demo-notice">Demo-Umgebung · Alle Spülpunkte, Personen und Messwerte sind Beispieldaten.</div>' : ""}${ble.job && user.role !== "viewer" ? `<div class="notice no-print">${icon("bluetooth")}<span>ESP32-Auftrag ${esc(ble.job.code)}: ${ble.job.savedId ? "Die Messung ist gespeichert; die Empfangsbestätigung steht noch aus." : "Der Auftrag ist noch offen. Bei unklarem Speicherstatus kannst du die Serverbestätigung prüfen."} <a class="text-link" href="#/devices">Verbindung öffnen und bestätigen</a></span></div>` : ""}${user.role !== "viewer" && notes.length && section !== "notes" ? `<div class="internal-alert no-print">${icon("info")}<a href="#/notes">${new Set(notes.map((n) => n.point_id)).size} Spülpunkt(e) mit offenen internen Bemerkungen ansehen</a></div>` : ""}${content}<footer class="footer"><span>© ${new Date().getFullYear()} SpülPilot · Stadtwerke Heppenheim</span><span>${icon("shield")}Zugriff geschützt · ${roleName[user.role]}</span></footer></div></main></div>`;
+  app.innerHTML = `<div class="shell"><div class="menu-backdrop" data-action="menu"></div><aside class="sidebar">${brand()}<div class="nav-label">Arbeitsbereich</div><nav class="nav" aria-label="Hauptnavigation">${nav.map(([id, label, ic]) => `<a href="#/${id}" class="${section === id ? "active" : ""}" ${section === id ? 'aria-current="page"' : ""}>${icon(ic)}${label}${id === "lists" ? `<span class="count">${lists.length}</span>` : id === "notes" && notes.length ? `<span class="count issue-count">${new Set(notes.map((n) => n.point_id)).size}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="water-note">${icon("wave")}<h4>Jeder Tropfen zählt.</h4><p>Spülmanagement für das Trinkwassernetz der Stadtwerke Heppenheim.</p></div><div class="user"><div class="avatar">${esc(initials(user.name))}</div><div><strong>${esc(user.name)}</strong><small>${roleName[user.role]}</small></div><button class="logout" data-action="logout" title="Abmelden" aria-label="Abmelden">${icon("logout")}</button></div></div></aside><main class="main"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-action="menu" aria-label="Menü öffnen">${icon("menu")}</button>Arbeitsbereich ${icon("chevron")} <strong>${nav.find((x) => x[0] === section)?.[1] || "Spüllisten"}</strong></div><div class="top-right"><span class="system"><i class="dot"></i>Mit Datenbank verbunden</span><span class="top-date">${new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span><div class="avatar">${esc(initials(user.name))}</div></div></header><div class="content">${status.demo ? '<div class="demo-notice">Demo-Umgebung · Alle Spülpunkte, Personen und Messwerte sind Beispieldaten.</div>' : ""}${ble.job && user.role !== "viewer" ? `<div class="notice no-print">${icon("bluetooth")}<span>ESP32-Auftrag ${esc(ble.job.code)}: ${ble.job.savedId ? "Die Messung ist gespeichert; die Empfangsbestätigung steht noch aus." : "Der Auftrag ist noch offen. Bei unklarem Speicherstatus kannst du die Serverbestätigung prüfen."} <a class="text-link" href="#/devices">Verbindung öffnen und bestätigen</a></span></div>` : ""}${user.role !== "viewer" && notes.length && section !== "notes" ? `<div class="internal-alert no-print">${icon("info")}<a href="#/notes">${new Set(notes.map((n) => n.point_id)).size} Spülpunkt(e) mit offenen internen Bemerkungen ansehen</a></div>` : ""}${flowRecorder.active && user.role !== "viewer" && flowRecorder.ownerId === user.id ? `<div class="notice no-print"><span>Durchflussaufzeichnung ${flowRecorder.running ? "läuft" : "ist noch offen"}. <a href="#/flow/${flowRecorder.active.id}" class="text-link">Messung öffnen</a></span></div>` : ""}${content}<footer class="footer"><span>© ${new Date().getFullYear()} SpülPilot · Stadtwerke Heppenheim</span><span>${icon("shield")}Zugriff geschützt · ${roleName[user.role]}</span></footer></div></main></div>`;
   bindActions();
   updateBlePanels();
 }
@@ -457,6 +516,167 @@ function usersPage() {
     `<div class="notice">${icon("shield")}<span><strong>Administration</strong> verwaltet Listen, Spülpunkte und Benutzer. <strong>Administration und Mitarbeiter</strong> dokumentieren Spülungen in ihren freigegebenen Listen. <strong>Betrachter</strong> lesen und drucken Protokolle.</span></div><section class="panel"><div class="panel-head"><div><h2>Dein Team</h2><p>${users.length} Benutzerkonten</p></div></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>E-Mail-Adresse</th><th>Rolle</th><th>Status</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td><strong>${esc(u.name)}</strong>${u.id === user.id ? '<span class="sub">Dein Konto</span>' : ""}</td><td>${esc(u.email)}</td><td><span class="badge ${u.role === "admin" ? "blue" : ""}">${roleName[u.role]}</span></td><td><span class="badge ${u.active ? "green" : ""}">${u.active ? "Aktiv" : "Deaktiviert"}</span>${u.must_change_password ? '<span class="sub">Passwortwechsel erforderlich</span>' : ""}</td><td><div class="actions"><button class="table-action" data-action="edit-user" data-id="${u.id}">Bearbeiten ${icon("edit")}</button>${u.active && u.id !== user.id ? `<button class="table-action" data-action="reset-password" data-id="${u.id}">Einmalpasswort erstellen ${icon("lock")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div></section>`
   );
 }
+function flowBluetoothPanel() {
+  return `<div class="ble-head"><div class="ble-title">${icon("bluetooth")}<strong>SpuelPilot-ESP32</strong><span class="badge ${ble.connected ? "green" : ""}">${ble.connected ? "Verbunden" : "Nicht verbunden"}</span></div><button type="button" class="button secondary" data-ble-action="${ble.connected ? "disconnect" : "connect"}" ${ble.busy ? "disabled" : ""}>${ble.connected ? "Trennen" : "Bluetooth verbinden"}</button></div><div class="flow-current"><small>Aktueller Durchfluss</small><strong>${ble.connected && ble.live ? number(ble.live.flow) : "—"} <span>m³/h</span></strong></div><p class="ble-hint">Nur der Durchfluss wird aufgezeichnet. Keine Temperatur und kein Spülauftrag erforderlich.</p>${ble.error ? `<p class="ble-error">${esc(ble.error)}</p>` : ""}`;
+}
+function flowPage() {
+  const m = flowDetail;
+  if (!m)
+    return (
+      heading(
+        "Durchflussmessungen",
+        "Zeichne den Durchfluss bis zum manuellen Beenden auf. Diagramm, Adresse und Bemerkung bleiben gespeichert.",
+        button("Neue Durchflussmessung", "new-flow", "plus"),
+      ) +
+      `<div class="ble-widget" data-ble-panel="flow"></div>${flowRecorder.active ? `<section class="panel flow-recording" data-flow-recording="${flowRecorder.active.id}"></section>` : ""}<div class="list-grid">${flowRecords.map((m) => `<a class="list-card" href="#/flow/${m.id}"><div class="list-card-top"><div class="folder">${icon("wave")}</div><span class="badge ${m.status === "active" ? "amber" : "green"}">${m.status === "active" ? "Noch offen" : "Abgeschlossen"}</span></div><h3>${esc(m.address)}</h3><p>${date(m.started_at)} · ${esc(m.employee)}</p><div class="card-bottom"><span>${m.sample_count} Messwerte</span>${icon("arrow")}</div></a>`).join("") || empty("Noch keine Durchflussmessungen", "Verbinde den ESP32 und starte deine erste Aufzeichnung.")}</div>`
+    );
+  const own = m.user_id === user.id;
+  return (
+    `<a class="back" href="#/flow">${icon("back")}Alle Durchflussmessungen</a>` +
+    heading(
+      esc(m.address),
+      `${date(m.started_at)} · ${esc(m.employee)} · ${m.status === "active" ? "Noch offen" : "Abgeschlossen"}`,
+      button("Adresse / Bemerkung bearbeiten", "edit-flow", "edit", true) +
+        (m.status === "completed"
+          ? button("Messung löschen", "delete-flow", "close", true)
+          : ""),
+      "DURCHFLUSSMESSUNG",
+    ) +
+    `${m.status === "active" && own ? '<div class="ble-widget" data-ble-panel="flow"></div>' : ""}${own && (m.status === "active" || flowRecorder.active?.id === m.id) ? `<section class="panel flow-recording" data-flow-recording="${m.id}"></section>` : ""}<section class="panel flow-chart-panel"><div class="panel-head"><div><h2>Durchflussverlauf</h2><p>m³/h über die Messdauer · Unterbrechungen werden nicht als Nullwerte gewertet.</p></div><span class="badge ${m.status === "active" ? "amber" : "green"}">${m.status === "active" ? "Offene Messung" : "Gespeichert"}</span></div><div data-flow-chart="${m.id}">${flowChart(flowSeries)}</div><div class="flow-summary" data-flow-summary="${m.id}"></div></section><section class="panel flow-note"><h2>Bemerkung</h2><p class="flow-note-text">${esc(m.remark || "Keine Bemerkung eingetragen.")}</p></section>`
+  );
+}
+function updateFlowPanels() {
+  if (!user || user.role === "viewer") return;
+  document.querySelectorAll("[data-flow-recording]").forEach((panel) => {
+    const id = Number(panel.dataset.flowRecording),
+      local = flowRecorder.active?.id === id,
+      running = local && flowRecorder.running,
+      pending = local ? flowRecorder.pending : 0;
+    panel.innerHTML = `<div class="flow-recording-head"><div><h2>${running ? (ble.connected && ble.live ? "Aufzeichnung läuft" : "Wartet auf Live-Daten") : local && flowRecorder.active.stopping ? "Abschluss noch nicht bestätigt" : "Aufzeichnung fortsetzen"}</h2><p>${pending ? `${pending} Messwert(e) lokal gesichert, Übertragung steht aus.` : "Messwerte werden fortlaufend gesichert."}</p></div><div class="actions">${!running && !flowRecorder.active?.stopping ? `<button class="button" data-flow-action="resume" data-id="${id}" ${!ble.connected ? "disabled" : ""}>Fortsetzen</button>` : ""}<button class="button secondary" data-flow-action="finish" data-id="${id}">${local && flowRecorder.active.stopping ? "Speicherung erneut versuchen" : "Messung beenden"}</button></div></div>${flowRecorder.error ? `<p class="ble-error" role="alert">${esc(flowRecorder.error)}</p>` : ""}<p class="ble-hint">Seite und Bluetooth-Verbindung für die Aufzeichnung geöffnet halten. Bei einer Unterbrechung bleiben gespeicherte Daten erhalten; fehlende Werte erscheinen als Lücke. Beenden stoppt nur die Aufzeichnung, kein Ventil.</p>`;
+  });
+  document.querySelectorAll("[data-flow-chart]").forEach((panel) => {
+    const id = Number(panel.dataset.flowChart),
+      local = flowRecorder.active?.id === id,
+      points =
+        local && flowRecorder.points.length ? flowRecorder.points : flowSeries;
+    panel.innerHTML = flowChart(points);
+    panel.querySelector("svg")?.addEventListener("pointermove", (event) => {
+      const rect = event.currentTarget.getBoundingClientRect(),
+        ratio = Math.max(
+          0,
+          Math.min(
+            1,
+            (((event.clientX - rect.left) / rect.width) *
+              event.currentTarget.viewBox.baseVal.width -
+              60) /
+              (event.currentTarget.viewBox.baseVal.width - 82),
+          ),
+        );
+      const time = ratio * Math.max(1000, ...points.map((p) => p.elapsed_ms));
+      const nearest = points.reduce(
+        (best, p) =>
+          Math.abs(p.elapsed_ms - time) < Math.abs(best.elapsed_ms - time)
+            ? p
+            : best,
+        points[0],
+      );
+      if (nearest)
+        panel.querySelector("[data-flow-hover]").textContent =
+          `${flowDuration(nearest.elapsed_ms)} · ${number(nearest.flow)} m³/h`;
+    });
+    const summary = document.querySelector(`[data-flow-summary="${id}"]`);
+    if (summary) {
+      const m = flowDetail,
+        count = local
+          ? Math.max(m?.sample_count || 0, flowRecorder.active.nextSeq)
+          : m?.sample_count || 0;
+      summary.innerHTML = `<span>Messwerte<strong>${number(count, 0)}</strong></span><span>Dauer<strong>${flowDuration(local ? flowRecorder.active.lastElapsed : m?.elapsed_ms || 0)}</strong></span><span>Maximum<strong>${number(Math.max(m?.max_flow || 0, ...points.map((p) => p.flow)))} m³/h</strong></span>`;
+    }
+  });
+}
+function newFlowModal() {
+  if (!ble.connected)
+    throw Error("Bitte zuerst den ESP32 über Bluetooth verbinden.");
+  if (flowRecorder.active)
+    throw Error(
+      "Bitte die offene Durchflussmessung zuerst fortsetzen oder beenden.",
+    );
+  const request_id = crypto.randomUUID();
+  showModal(
+    "Durchflussmessung starten",
+    "Ohne Temperatur und ohne Sollmenge",
+    field("Adresse", "address", "", "text", 'required maxlength="300"') +
+      `<div class="field"><label for="f-remark">Bemerkung (optional)</label><textarea id="f-remark" name="remark" rows="3" maxlength="2000"></textarea></div><div class="notice">${icon("info")}Die Aufzeichnung läuft bis „Messung beenden“. LIVE-Daten werden fortlaufend gesichert. Betrachter haben keinen Zugriff.</div>`,
+    async (data) => {
+      await flowRecorder.start({ ...data, request_id });
+      location.hash = "#/flow/" + flowRecorder.active.id;
+      toast("Durchflussaufzeichnung gestartet.");
+    },
+    "Aufzeichnung starten",
+  );
+}
+function editFlowModal() {
+  const m = flowDetail;
+  if (!m) return;
+  showModal(
+    "Durchflussmessung bearbeiten",
+    esc(m.address),
+    field("Adresse", "address", m.address, "text", 'required maxlength="300"') +
+      `<div class="field"><label for="f-remark">Bemerkung (optional)</label><textarea id="f-remark" name="remark" rows="3" maxlength="2000">${esc(m.remark)}</textarea></div>`,
+    (data) =>
+      api("/flow-measurements/" + m.id, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+  );
+}
+function deleteFlowModal() {
+  const m = flowDetail;
+  if (!m) return;
+  showModal(
+    "Durchflussmessung löschen",
+    esc(m.address),
+    `<div class="notice">Diese Messung mit ihrem Diagramm wird aus der Anwendung entfernt. Andere Messungen bleiben erhalten.</div>` +
+      field(
+        "Zur Bestätigung die Adresse eingeben",
+        "confirm_address",
+        "",
+        "text",
+        "required",
+      ),
+    async (data) => {
+      await api("/flow-measurements/" + m.id, {
+        method: "DELETE",
+        body: JSON.stringify(data),
+      });
+      location.hash = "#/flow";
+      toast("Durchflussmessung gelöscht.");
+    },
+    "Messung löschen",
+  );
+}
+app.addEventListener("click", async (event) => {
+  const target = event.target.closest("[data-flow-action]");
+  if (!target || target.disabled) return;
+  const id = Number(target.dataset.id);
+  target.disabled = true;
+  try {
+    if (target.dataset.flowAction === "resume") {
+      if (!ble.connected) throw Error("Bitte Bluetooth verbinden.");
+      await flowRecorder.resume(id);
+    } else {
+      if (flowRecorder.active?.id !== id)
+        await flowRecorder.resume(id, { record: false });
+      await flowRecorder.finish();
+      toast("Durchflussmessung und Diagramm gespeichert.");
+      await render();
+    }
+  } catch (error) {
+    toast(error.message);
+    flowRecorder.error = error.message;
+  }
+  updateFlowPanels();
+});
 function devicesPage() {
   return (
     heading(
@@ -471,8 +691,11 @@ function devicesPage() {
 async function render() {
   if (!user) return renderAuth();
   if (user.must_change_password) return renderPasswordRequired();
+  const version = ++loadVersion,
+    owner = user.id;
   ble.bindUser(user.role === "viewer" ? null : user.id);
-  const version = ++loadVersion;
+  await flowRecorder.bindUser(user.role === "viewer" ? null : user.id);
+  if (version !== loadVersion || user?.id !== owner) return;
   try {
     const [ls, fs, ns, rs, ss] = await Promise.all([
       api("/lists"),
@@ -490,7 +713,25 @@ async function render() {
     const [path] = location.hash.slice(2).split("?"),
       parts = (path || "overview").split("/");
     const section = parts[0];
-    if (section === "notes") {
+    if (section === "flow") {
+      if (user.role === "viewer") {
+        location.hash = "#/overview";
+        return;
+      }
+      flowRecords = await api("/flow-measurements");
+      flowDetail = null;
+      flowSeries = [];
+      if (parts[1]) {
+        const id = Number(parts[1]);
+        [flowDetail, flowSeries] = await Promise.all([
+          api("/flow-measurements/" + id),
+          api("/flow-measurements/" + id + "/series"),
+        ]);
+      }
+      if (version !== loadVersion) return;
+      layout(flowPage(), "flow");
+      updateFlowPanels();
+    } else if (section === "notes") {
       if (user.role === "viewer") {
         location.hash = "#/overview";
         return;
@@ -1238,7 +1479,10 @@ function updateBlePanels() {
     const focusedAction = panel.contains(document.activeElement)
       ? document.activeElement.dataset.bleAction
       : null;
-    panel.innerHTML = blePanel(context);
+    panel.innerHTML =
+      panel.dataset.blePanel === "flow"
+        ? flowBluetoothPanel()
+        : blePanel(context);
     if (focusedAction)
       panel
         .querySelector(`[data-ble-action="${focusedAction}"]`)
@@ -1443,6 +1687,9 @@ function bindActions(root = app) {
             );
           else if (action === "delete-run") deleteRunModal();
           else if (action === "settings") settingsModal();
+          else if (action === "new-flow") newFlowModal();
+          else if (action === "edit-flow") editFlowModal();
+          else if (action === "delete-flow") deleteFlowModal();
           else if (action === "print") window.print();
         } catch (err) {
           toast(err.message);
