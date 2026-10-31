@@ -1,3 +1,4 @@
+import { installFlowRoutes } from "./flow-routes.js";
 import express from "express";
 import { DatabaseSync, backup } from "node:sqlite";
 import {
@@ -937,6 +938,7 @@ const internalRole = (req, res, next) =>
         403,
         "Interne Bemerkungen sind für Betrachter nicht zugänglich.",
       );
+installFlowRoutes({ app, db, one, all, run, transaction, fail });
 const noteVisible = (session, id) =>
   !!one(
     `SELECT n.id FROM internal_notes n JOIN flushes f ON f.id=n.flush_id JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE n.id=? AND f.deleted_at IS NULL AND r.deleted_at IS NULL AND l.deleted_at IS NULL ${session.role === "admin" ? "" : "AND (f.user_id=? OR EXISTS(SELECT 1 FROM assignments a WHERE a.list_id=r.list_id AND a.user_id=?))"}`,

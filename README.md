@@ -156,3 +156,9 @@ Spülpunkte lassen sich über die gesamte Tabellenzeile öffnen, per Antippen/Kl
 Spülpunkte sind während der Erfassung bzw. eines offenen lokalen ESP32-Auftrags gelb, nach gespeicherter Bearbeitung grün und bei einer offenen internen Bemerkung rot. Rot hat Vorrang. Nach Quittierung einer Bemerkung gilt wieder der normale Bearbeitungsstatus. Die Trübung ist bei neuen Messungen mit **Nein – keine Trübung** vorbelegt; eine vorhandene Auswahl für einen offenen Auftrag bleibt erhalten.
 
 Normale Anmeldungen verwenden ein persistentes Cookie mit 30 Tagen Gültigkeit. Bei Nutzung wird die Laufzeit höchstens einmal täglich erneut auf 30 Tage verlängert. Nach 30 Tagen ohne Zugriff ist eine neue Anmeldung nötig. Abmeldung, Passwortänderung, Passwortreset und Kontosperrung widerrufen Sitzungen weiterhin; Sitzungen für den erzwungenen Wechsel eines Einmalpassworts bleiben auf zehn Minuten begrenzt und werden nicht verlängert.
+
+### Durchflussmessung ohne Spülauftrag
+
+Unter **Durchflussmessung** können Mitarbeiter eigene Messungen mit Adresse, Bemerkung und einem gespeicherten Durchflussdiagramm erstellen und verwalten. Die Administration hat Zugriff auf alle Messungen; Betrachter haben weder Menü- noch API-Zugriff. Temperaturen werden nicht erfasst. Die Aufzeichnung nutzt die vorhandenen LIVE-Notifications und läuft ohne Sollmenge bis **Messung beenden**.
+
+Die Messwerte werden fortlaufend lokal gesichert und an den Server übertragen. Nach Netzproblemen können ausstehende Werte auch nach einem Reload übertragen werden. Bluetooth-/Browser-Unterbrechungen werden als Lücken dargestellt. Für eine durchgehende Aufzeichnung müssen Webseite und Bluetooth-Verbindung aktiv bleiben. Neue separate Tabellen speichern diese Kurven, ohne bestehende Spülprotokolle oder die Spülstatistik zu verändern. Bedienung und technische Details: [Interne Durchflussmessungen](docs/durchflussmessung.md).

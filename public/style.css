@@ -2109,3 +2109,148 @@ tr.point-issue > td,
 tr.point-issue:hover > td {
   background: #fff0f0;
 }
+
+.flow-current {
+  margin: 18px 0 8px;
+}
+.flow-current small {
+  display: block;
+  color: #6c8799;
+  margin-bottom: 4px;
+}
+.flow-current strong {
+  font-size: 32px;
+  color: #18536c;
+  font-variant-numeric: tabular-nums;
+}
+.flow-current strong span {
+  font-size: 15px;
+  font-weight: 500;
+}
+.flow-recording {
+  padding: 22px;
+  margin: 20px 0;
+  background: #f0faff;
+}
+.flow-recording-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.flow-recording-head h2 {
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+.flow-recording-head p {
+  color: #648091;
+  font-size: 13px;
+  margin: 0;
+}
+.flow-chart-panel {
+  margin: 22px 0;
+  overflow: hidden;
+}
+.flow-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  touch-action: pan-y;
+}
+.flow-chart text {
+  fill: #78909f;
+  font:
+    11px system-ui,
+    sans-serif;
+}
+.flow-grid-line {
+  stroke: #e4edf2;
+  stroke-width: 1;
+}
+.flow-chart-line {
+  fill: none;
+  stroke: #119dbb;
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.flow-chart-area {
+  fill: #19aeb0;
+  fill-opacity: 0.1;
+  stroke: none;
+}
+.flow-chart-dot {
+  fill: #119dbb;
+  stroke: white;
+  stroke-width: 2;
+}
+.flow-chart-hover {
+  color: #698593;
+  font-size: 12px;
+  text-align: center;
+  min-height: 20px;
+  padding: 0 12px;
+}
+.flow-chart-empty {
+  padding: 70px 24px;
+  text-align: center;
+  color: #78909f;
+}
+.flow-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid #e5edf2;
+  gap: 15px;
+  padding: 20px 24px;
+}
+.flow-summary span {
+  color: #78909f;
+  font-size: 12px;
+}
+.flow-summary strong {
+  display: block;
+  color: #24546c;
+  font-size: 19px;
+  margin-top: 5px;
+}
+.flow-note {
+  padding: 24px;
+  margin-bottom: 22px;
+}
+.flow-note h2 {
+  font-size: 17px;
+  margin: 0 0 12px;
+}
+.flow-note-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #567383;
+}
+@media (max-width: 650px) {
+  .flow-recording-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .flow-recording {
+    padding: 16px;
+  }
+  .flow-summary {
+    padding: 16px;
+    gap: 10px;
+  }
+  .flow-summary strong {
+    font-size: 15px;
+  }
+  .flow-chart text {
+    font-size: 13px;
+  }
+}
+
+.flow-chart {
+  stroke: none;
+  fill: none;
+}
+.flow-chart text {
+  stroke: none;
+}
