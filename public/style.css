@@ -3541,3 +3541,56 @@ tr.point-issue:hover > td {
     font-size: 12px;
   }
 }
+
+/* Operational status must stay unmistakable against the glass surfaces. */
+@media screen {
+  tr.point-complete > td,
+  tr.point-complete:hover > td {
+    background: #b6e8c3;
+  }
+  tr.point-working > td,
+  tr.point-working:hover > td {
+    background: #ffe08a;
+  }
+  tr.point-issue > td,
+  tr.point-issue:hover > td {
+    background: #f6b1b6;
+  }
+  tr.point-complete > td:first-child {
+    box-shadow: inset 5px 0 0 #19864b;
+  }
+  tr.point-working > td:first-child {
+    box-shadow: inset 5px 0 0 #ba8300;
+  }
+  tr.point-issue > td:first-child {
+    box-shadow: inset 5px 0 0 #c52e42;
+  }
+  tr.point-complete .badge {
+    background: #187443;
+    color: #fff;
+    font-weight: 700;
+  }
+  tr.point-working .badge {
+    background: #f5b800;
+    color: #493500;
+    font-weight: 700;
+  }
+  tr.point-issue .badge {
+    background: #b42338;
+    color: #fff;
+    font-weight: 700;
+  }
+  .issue-card {
+    background: #ffe0e3;
+    border: 2px solid #dc7684;
+  }
+  .issue-card .issue-badge {
+    background: #b42338;
+    color: #fff;
+  }
+  .internal-alert {
+    background: #f9c4c9;
+    border-color: #db727f;
+    color: #7a1729;
+  }
+}
