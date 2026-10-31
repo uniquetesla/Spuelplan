@@ -26,7 +26,7 @@ function validId(id) {
     throw Error(
       "Die Spülpunkt-ID darf für Bluetooth kein Semikolon und keinen Zeilenumbruch enthalten.",
     );
-  if (["GET", "STATUS", "ACK", "NONE"].includes(id.toUpperCase()))
+  if (["GET", "STATUS", "ACK", "NONE", "LIVE"].includes(id.toUpperCase()))
     throw Error("Diese Spülpunkt-ID ist für das ESP32-Protokoll reserviert.");
   return id;
 }
@@ -103,17 +103,82 @@ export function parseResult(frame, expected) {
   if (volume < expected.target) throw new MeasurementNotReady();
   return { volume, temperature_before, temperature_after };
 }
+export function parseLive(frame) {
+  if (typeof frame !== "string" || new TextEncoder().encode(frame).length > 512)
+    throw Error("Ungültiges Live-Telegramm.");
+  const text = frame.trim(),
+    parts = text.split(";");
+  if (
+    parts.length !== 9 ||
+    parts[0] !== "LIVE" ||
+    /[\r\n\u0000-\u001f\u007f]/.test(text)
+  )
+    throw Error(
+      "Live-Telegramm unvollständig. Erwartet werden neun Felder; bitte Firmware und ATT-MTU prüfen.",
+    );
+  const state = parts[1];
+  if (
+    !["IDLE", "WAIT_FLOW", "COUNTDOWN", "MEASURING", "READY", "ERROR"].includes(
+      state,
+    )
+  )
+    throw Error("Unbekannter Live-Messstatus.");
+  const idleId = ["", "-", "NONE"].includes(parts[2]);
+  const code =
+    idleId && ["IDLE", "ERROR"].includes(state) ? null : validId(parts[2]);
+  if (idleId && !["IDLE", "ERROR"].includes(state))
+    throw Error("Die Spülpunkt-ID fehlt im Live-Telegramm.");
+  const values = parts.slice(3).map((part) => {
+    if (!/^-?(?:\d+(?:[.,]\d+)?|[.,]\d+)$/.test(part))
+      throw Error("Ungültige Live-Zahl.");
+    const value = Number(part.replace(",", "."));
+    if (!Number.isFinite(value)) throw Error("Ungültige Live-Zahl.");
+    return value;
+  });
+  const [flow, temperature, volume, target, percent, remaining] = values;
+  if (
+    flow < 0 ||
+    flow > 1000000 ||
+    temperature < -55 ||
+    temperature > 125 ||
+    volume < 0 ||
+    volume > 1000000 ||
+    target < 0 ||
+    target > 1000000 ||
+    percent < 0 ||
+    percent > 100 ||
+    (remaining !== -1 && (remaining < 0 || remaining > 315360000)) ||
+    (code && state !== "ERROR" && state !== "IDLE" && target <= 0)
+  )
+    throw Error("Live-Werte außerhalb der zulässigen Bereiche.");
+  return {
+    type: "live",
+    state,
+    code,
+    flow,
+    temperature,
+    volume,
+    target,
+    percent,
+    remaining,
+  };
+}
 export function parseMessage(frame) {
   if (typeof frame !== "string" || new TextEncoder().encode(frame).length > 512)
     throw Error("Ungültige ESP32-Nachricht.");
   const text = frame.trim();
+  if (text.startsWith("LIVE;")) return parseLive(text);
+  if (/[\r\n\u0000-\u001f\u007f]/.test(text))
+    throw Error("Ungültige Steuerzeichen im ESP32-Telegramm.");
   if (text === "NONE") return { type: "none" };
   if (text === "STATUS;ACK_OK") return { type: "ack" };
   const parts = text.split(";");
   if (parts[0] === "STATUS") {
     if (
       parts.length !== 3 ||
-      !["WAIT_FLOW", "COUNTDOWN", "MEASURING", "READY"].includes(parts[1])
+      !["WAIT_FLOW", "COUNTDOWN", "MEASURING", "READY", "ERROR"].includes(
+        parts[1],
+      )
     )
       throw Error("Unbekannter ESP32-Status.");
     return { type: "status", state: parts[1], code: validId(parts[2]) };
@@ -122,6 +187,8 @@ export function parseMessage(frame) {
   return { type: "result", code: parts[0], ...measurement };
 }
 export const STATUS_LABELS = {
+  IDLE: "Bereit – kein Messauftrag aktiv",
+  ERROR: "Messfehler – Gerät und Sensoren prüfen",
   WAIT_FLOW: "Wartet auf mindestens 1 m³/h Durchfluss",
   COUNTDOWN: "5-Sekunden-Countdown für Temperatur vorher",
   MEASURING: "Messung läuft",
@@ -147,10 +214,19 @@ export class Esp32Client extends EventTarget {
     this.busy = false;
     this.error = "";
     this.deviceStatus = null;
+    this.live = null;
+    this.liveTimer = null;
+    this.transport = { maxNotificationBytes: 0, invalidFrames: 0, mtu: null };
     this.generation = 0;
     this.waiting = null;
     this.onDisconnected = () => {
       this.generation++;
+      this.clearLive();
+      this.deviceStatus = null;
+      this.result?.removeEventListener(
+        "characteristicvaluechanged",
+        this.onNotification,
+      );
       this.command = null;
       this.result = null;
       this.busy = false;
@@ -164,17 +240,32 @@ export class Esp32Client extends EventTarget {
       this.changed();
     };
     this.onNotification = (event) => {
+      if (event.target !== this.result || !this.device?.gatt?.connected) return;
+      let frame = "";
       try {
-        const message = parseMessage(
-          new TextDecoder("utf-8", { fatal: true }).decode(event.target.value),
+        const value = event.target.value;
+        this.transport.maxNotificationBytes = Math.max(
+          this.transport.maxNotificationBytes,
+          value.byteLength,
         );
-        this.receive(message);
+        frame = new TextDecoder("utf-8", { fatal: true }).decode(value);
+        this.receive(parseMessage(frame));
       } catch (error) {
+        this.transport.invalidFrames++;
+        error.code = "BLE_FRAME_ERROR";
         this.error = error.message;
-        this.rejectWaiting(error);
+        // Telemetry must never settle or reject a GET/ACK waiter. Partial unframed
+        // telegrams are discarded, not concatenated with a later measurement.
+        if (frame.startsWith("LIVE") || !frame) this.clearLive();
+        else this.rejectWaiting(error);
         this.changed();
       }
     };
+  }
+  clearLive() {
+    clearTimeout(this.liveTimer);
+    this.liveTimer = null;
+    this.live = null;
   }
   get connected() {
     return !!(this.device?.gatt?.connected && this.command && this.result);
@@ -232,9 +323,23 @@ export class Esp32Client extends EventTarget {
     this.changed();
   }
   receive(message) {
+    if (message.type === "live") {
+      clearTimeout(this.liveTimer);
+      this.live = { ...message, receivedAt: Date.now() };
+      this.deviceStatus = {
+        type: "status",
+        state: message.state,
+        code: message.code,
+      };
+      this.liveTimer = setTimeout(() => {
+        this.clearLive();
+        this.changed();
+      }, 5000);
+      this.liveTimer.unref?.();
+    }
     if (message.type === "status") this.deviceStatus = message;
     this.dispatchEvent(Object.assign(new Event("message"), { message }));
-    if (this.waiting?.accept(message)) {
+    if (message.type !== "live" && this.waiting?.accept(message)) {
       const waiter = this.waiting;
       this.waiting = null;
       clearTimeout(waiter.timer);
@@ -322,7 +427,7 @@ export class Esp32Client extends EventTarget {
       if (generation !== this.generation || !device.gatt.connected)
         throw Error("Bluetooth wurde während des Verbindens getrennt.");
       this.command = command;
-      // Status notifications update the UI; the read button still explicitly sends GET.
+      // Subscribe before STATUS; LIVE notifications are independent of request replies.
       await this.write("STATUS");
     } catch (error) {
       this.disconnect();
@@ -338,6 +443,7 @@ export class Esp32Client extends EventTarget {
   }
   disconnect() {
     this.generation++;
+    this.clearLive();
     this.rejectWaiting(Error("Bluetooth wurde getrennt."));
     this.command = null;
     this.result?.removeEventListener(
@@ -385,12 +491,38 @@ export class Esp32Client extends EventTarget {
   }
   async getResult() {
     try {
-      return await this.request(
+      const message = await this.request(
         "GET",
         (m) => m.type === "result" || m.type === "none",
       );
+      if (message.type === "result") {
+        // A truncated final number can still look syntactically valid. Verify
+        // the complete characteristic value before any server save or ACK.
+        const generation = this.generation;
+        const value = await this.timed(this.result.readValue());
+        if (!this.connected || generation !== this.generation)
+          throw Error("Bluetooth wurde beim Prüfen des Ergebnisses getrennt.");
+        const read = parseMessage(
+          new TextDecoder("utf-8", { fatal: true }).decode(value),
+        );
+        if (
+          read.type !== "result" ||
+          ["code", "volume", "temperature_before", "temperature_after"].some(
+            (key) => read[key] !== message[key],
+          )
+        ) {
+          throw Error(
+            "GET-Notification und TX Read stimmen nicht überein. Kein vollständiges Ergebnis bestätigt; prüfe Firmware und MTU. Es wird nichts gespeichert oder bestätigt.",
+          );
+        }
+      }
+      return message;
     } catch (error) {
-      if (error.code !== "BLE_TIMEOUT" || !this.connected) throw error;
+      if (
+        !["BLE_TIMEOUT", "BLE_FRAME_ERROR"].includes(error.code) ||
+        !this.connected
+      )
+        throw error;
       // TX Read is a fallback for a missed notification, never a second measurement command.
       const generation = this.generation,
         data = await this.timed(this.result.readValue());
@@ -428,6 +560,10 @@ export class Esp32Client extends EventTarget {
         (m) => m.type === "status" || m.type === "none",
       );
       if (status.type === "status") {
+        if (status.state === "ERROR")
+          throw Error(
+            "Der ESP32 meldet einen Messfehler. Prüfe das Gerät vor einem neuen Auftrag.",
+          );
         if (status.state === "READY")
           throw Error(
             "Auf dem ESP32 liegt ein fertiges Ergebnis. Bitte zuerst abrufen und speichern.",
@@ -644,6 +780,8 @@ export class Esp32Client extends EventTarget {
           "Die Messung ist bereits abgeschlossen. Bitte Messdaten abrufen und speichern; das Ergebnis bleibt erhalten.",
         );
       }
+      if (!["WAIT_FLOW", "COUNTDOWN", "MEASURING"].includes(status.state))
+        throw Error("Der ESP32 hat keine abbrechbare Messung bestätigt.");
       this.job.cancelPending = true;
       this.persist();
       const response = await this.request(

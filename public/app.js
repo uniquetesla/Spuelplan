@@ -84,12 +84,22 @@ try {
 } catch {}
 const ble = new Esp32Client({ storage: bleStorage });
 let activeBleForm = null;
+let completedMeasurement = null,
+  bleDraft = null,
+  readyAttempt = null,
+  autoSaveAttempt = null,
+  automaticRunning = false,
+  savingMeasurement = false;
 modal.addEventListener("close", () => {
-  activeBleForm = null;
+  if (!modal.open) {
+    activeBleForm = null;
+    modal.innerHTML = "";
+  }
 });
 ble.addEventListener("change", () => {
   updateBlePanels();
   syncBleForm();
+  queueMicrotask(processReadyMeasurement);
 });
 const isAdmin = () => user?.role === "admin";
 const canDocument = () =>
@@ -308,7 +318,7 @@ function pointTable(rows) {
         ? button("Spülpunkt anlegen", "new-point")
         : "",
     );
-  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th><th>Sollmenge</th><th>Letzte Spülung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((p) => `<tr class="${notes.some((n) => n.point_id === p.id) ? "point-issue" : ""}"><td><span class="point-id">${esc(p.code)}</span></td><td><strong>${esc(p.address)}</strong></td><td>${number(p.target)} m³</td><td>${p.last_flush ? date(p.last_flush) : "—"}</td><td><span class="badge ${p.completed ? "green" : ""}">${p.completed ? "Bearbeitet" : "Noch offen"}</span></td><td><div class="actions">${canDocument() && !p.completed ? `<button class="table-action" data-action="flush" data-id="${p.id}">Spülung erfassen ${icon("arrow")}</button>` : ""}${isAdmin() || user.role === "viewer" ? `<button class="table-action" data-action="point-detail" data-id="${p.id}">${isAdmin() && currentList.status === "active" && !p.completed ? "Bearbeiten" : "Details"}${icon(isAdmin() ? "edit" : "chevron")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th><th>Sollmenge</th><th>Letzte Spülung</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((p) => `<tr class="point-selectable ${notes.some((n) => n.point_id === p.id) ? "point-issue" : ""}" data-action="select-point" data-id="${p.id}" tabindex="0" aria-label="Spülpunkt ${esc(p.code)} auswählen"><td><span class="point-id">${esc(p.code)}</span></td><td><strong>${esc(p.address)}</strong></td><td>${number(p.target)} m³</td><td>${p.last_flush ? date(p.last_flush) : "—"}</td><td><span class="badge ${p.completed ? "green" : ""}">${p.completed ? "Bearbeitet" : "Noch offen"}</span></td><td><div class="actions">${canDocument() && !p.completed ? `<button class="table-action" data-action="flush" data-id="${p.id}">Spülung erfassen ${icon("arrow")}</button>` : ""}${isAdmin() || user.role === "viewer" ? `<button class="table-action" data-action="point-detail" data-id="${p.id}">${isAdmin() && currentList.status === "active" && !p.completed ? "Bearbeiten" : "Details"}${icon(isAdmin() ? "edit" : "chevron")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>`;
 }
 function reportRuns() {
   return archivedRuns.map((r) => ({
@@ -420,7 +430,7 @@ function devicesPage() {
       "",
       "BLUETOOTH-MESSERFASSUNG",
     ) +
-    `<div class="ble-widget" data-ble-panel="device"></div><div class="device-card"><div class="device-icon">${icon("bluetooth")}</div><div><span class="badge blue">SpuelPilot-ESP32 · BLE</span><h2>Vom Spülpunkt zum Messprotokoll.</h2><p>Der ESP32 bleibt während des Spülvorgangs per Bluetooth mit dem Smartphone verbunden. Der vorgesehene Ablauf:</p><ol class="device-flow"><li><strong>Spülpunkt auswählen.</strong> Eine freigegebene Person aus Administration oder Mitarbeitern wählt den Punkt bei bestehender Bluetooth-Verbindung aus.</li><li><strong>Auftrag übertragen.</strong> Spülpunkt-ID und Sollmenge werden mit Semikolon getrennt übertragen, zum Beispiel SP-1024;2.50.</li><li><strong>Temperatur vorher messen.</strong> Sobald erstmals mindestens 1 m³/h Durchfluss erreicht werden, startet eine Wartezeit von 5 Sekunden. Danach wird die Temperatur vorher erfasst.</li><li><strong>Sollmenge erreichen.</strong> Die gespülte Menge wird ab Beginn dieses Auftrags gezählt. Beim Erreichen oder Überschreiten der Sollmenge wird die Temperatur nachher automatisch erfasst.</li><li><strong>Spüldaten übernehmen.</strong> Wenn die Status-LED am ESP32 leuchtet, klickst du auf „Messdaten abrufen“. GET fordert das Ergebnis per Notification an. Menge und Temperaturen werden ins Formular eingetragen; Trübung ergänzt du mit Ja oder Nein.</li></ol><div class="notice">${icon("info")}Erst „Spülung speichern“ sichert die Daten auf dem Server. Danach bestätigt die Anwendung den Empfang mit ACK;Spülpunkt-ID. Der ESP32 löscht erst dann sein Ergebnis und schaltet die LED aus. Bei Speicherfehlern bleibt das Ergebnis auf dem Gerät. Web Bluetooth benötigt HTTPS und einen unterstützten Browser; iOS Safari unterstützt es nicht.</div></div></div>`
+    `<div class="ble-widget" data-ble-panel="device"></div><div class="device-card"><div class="device-icon">${icon("bluetooth")}</div><div><span class="badge blue">SpuelPilot-ESP32 · BLE</span><h2>Vom Spülpunkt zum Messprotokoll.</h2><p>Der ESP32 bleibt während des Spülvorgangs per Bluetooth mit dem Smartphone verbunden. Der vorgesehene Ablauf:</p><ol class="device-flow"><li><strong>Spülpunkt auswählen.</strong> Eine freigegebene Person aus Administration oder Mitarbeitern wählt den Punkt bei bestehender Bluetooth-Verbindung aus.</li><li><strong>Auftrag übertragen.</strong> Spülpunkt-ID und Sollmenge werden mit Semikolon getrennt übertragen, zum Beispiel SP-1024;2.50.</li><li><strong>Temperatur vorher messen.</strong> Sobald erstmals mindestens 1 m³/h Durchfluss erreicht werden, startet eine Wartezeit von 5 Sekunden. Danach wird die Temperatur vorher erfasst.</li><li><strong>Sollmenge erreichen.</strong> Die gespülte Menge wird ab Beginn dieses Auftrags gezählt. Beim Erreichen oder Überschreiten der Sollmenge wird die Temperatur nachher automatisch erfasst.</li><li><strong>Spüldaten übernehmen.</strong> Bei READY fordert die Anwendung das vollständige Ergebnis automatisch mit GET an. Live-Werte allein werden niemals gespeichert. Mit ausgewählter Trübung (Ja/Nein) wird das Ergebnis automatisch gespeichert und erst danach bestätigt. Der Abrufbutton bleibt als Rückfallebene verfügbar.</li></ol><div class="notice">${icon("info")}Erst „Spülung speichern“ sichert die Daten auf dem Server. Danach bestätigt die Anwendung den Empfang mit ACK;Spülpunkt-ID. Der ESP32 löscht erst dann sein Ergebnis und schaltet die LED aus. Bei Speicherfehlern bleibt das Ergebnis auf dem Gerät. Web Bluetooth benötigt HTTPS und einen unterstützten Browser; iOS Safari unterstützt es nicht.</div></div></div>`
   );
 }
 async function render() {
@@ -695,65 +705,219 @@ function userModal(u) {
     },
   );
 }
+async function storeFlush(point, runId, data, fromEsp32, context) {
+  if (savingMeasurement) throw Error("Die Messung wird bereits gespeichert.");
+  if (![true, false, "true", "false"].includes(data.turbidity))
+    throw Error("Bitte die Trübung mit Ja oder Nein auswählen.");
+  const owner = user?.id,
+    job = fromEsp32 ? { ...ble.job } : null;
+  if (
+    fromEsp32 &&
+    (!ble.matches(point, runId) || !job.received || job.cancelPending)
+  )
+    throw Error("Die vollständigen Messdaten passen nicht zum Auftrag.");
+  savingMeasurement = true;
+  if (context) context.serverSaving = true;
+  updateBlePanels();
+  syncBleForm();
+  try {
+    const result = await send(`/points/${point.id}/flushes`, {
+      temperature_before: Number(data.temperature_before),
+      temperature_after: Number(data.temperature_after),
+      volume: Number(data.volume),
+      turbidity: data.turbidity === true || data.turbidity === "true",
+      note: data.note ?? "",
+      ...(fromEsp32
+        ? {
+            source: "esp32",
+            request_id: job.requestId,
+            run_id: runId,
+            measurement_point_code: point.code,
+            measurement_target: point.target,
+          }
+        : {}),
+    });
+    if (context) context.serverSaved = true;
+    let pendingAck = false;
+    if (fromEsp32) {
+      const current = ble.markSaved(result.receipt);
+      try {
+        if (!current) throw Error("Benutzerkonto gewechselt.");
+        await ble.acknowledge(result.receipt);
+      } catch {
+        pendingAck = true;
+      }
+      if (completedMeasurement?.requestId === job.requestId)
+        completedMeasurement = null;
+    }
+    if (user?.id === owner) {
+      if (result.status === "review") location.hash = "#/lists";
+      toast(
+        pendingAck
+          ? "Messung gespeichert. ESP32-Empfangsbestätigung steht noch aus."
+          : result.status === "review"
+            ? "Alle Punkte bearbeitet. Die Liste wurde zur Prüfung übergeben."
+            : "Spülung erfolgreich gespeichert.",
+      );
+    }
+    return result;
+  } finally {
+    savingMeasurement = false;
+    if (context) context.serverSaving = false;
+    updateBlePanels();
+    syncBleForm();
+  }
+}
+function currentBleDraft() {
+  const context = activeBleForm;
+  if (context && modal.open && ble.matches(context.point, context.runId)) {
+    const value = document.querySelector("#f-turbidity").value;
+    const draft = {
+      requestId: ble.job.requestId,
+      userId: user.id,
+      turbidity: value === "" ? null : value === "true",
+      note: document.querySelector("#f-note").value,
+    };
+    bleDraft = draft;
+    // Only a boolean joins the existing local job metadata. Internal notes and
+    // sensor values stay in memory and are never persisted in browser storage.
+    if (ble.job.turbidity !== draft.turbidity) {
+      ble.job.turbidity = draft.turbidity;
+      ble.persist();
+    }
+    return draft;
+  }
+  if (
+    bleDraft &&
+    ble.job &&
+    bleDraft.requestId === ble.job.requestId &&
+    bleDraft.userId === user?.id
+  )
+    return bleDraft;
+  return {
+    turbidity:
+      typeof ble.job?.turbidity === "boolean" ? ble.job.turbidity : null,
+    note: "",
+  };
+}
+function importCompletedMeasurement() {
+  const context = activeBleForm,
+    pending = completedMeasurement;
+  if (
+    !context ||
+    !modal.open ||
+    !pending ||
+    pending.userId !== user?.id ||
+    pending.requestId !== ble.job?.requestId ||
+    !ble.matches(context.point, context.runId)
+  )
+    return;
+  for (const key of ["volume", "temperature_before", "temperature_after"])
+    document.querySelector("#f-" + key).value = String(pending.values[key]);
+  context.imported = true;
+}
+async function processReadyMeasurement() {
+  if (
+    automaticRunning ||
+    savingMeasurement ||
+    !user ||
+    user.role === "viewer" ||
+    user.id !== ble.userId ||
+    !ble.connected ||
+    ble.busy ||
+    !ble.job ||
+    ble.job.cancelPending
+  )
+    return;
+  const job = ble.job,
+    owner = user.id,
+    requestId = job.requestId;
+  const ready =
+    ble.deviceStatus?.state === "READY" && ble.deviceStatus.code === job.code;
+  const attempt = `${owner}:${requestId}:${ble.generation}`;
+  if (!ready && completedMeasurement?.requestId !== requestId) return;
+  automaticRunning = true;
+  try {
+    if (ready && readyAttempt !== attempt && !job.savedId) {
+      readyAttempt = attempt;
+      if (ble.live?.code === job.code && ble.live.target !== job.target)
+        throw Error(
+          "Live-Sollmenge passt nicht zum Auftrag. Keine automatische Übernahme.",
+        );
+      const values = await ble.exchange(
+        { id: job.pointId, code: job.code, target: job.target },
+        job.runId,
+      );
+      if (user?.id !== owner || ble.job?.requestId !== requestId) return;
+      completedMeasurement = { requestId, userId: owner, values };
+      importCompletedMeasurement();
+    }
+    if (job.savedId) {
+      if (readyAttempt === attempt) return;
+      readyAttempt = attempt;
+      const receipt = await api(`/flushes/${job.savedId}/receipt`);
+      if (user?.id !== owner || ble.job?.requestId !== requestId) return;
+      await ble.acknowledge(receipt);
+      return;
+    }
+    if (
+      completedMeasurement?.requestId !== requestId ||
+      completedMeasurement.userId !== owner
+    )
+      return;
+    importCompletedMeasurement();
+    const draft = currentBleDraft();
+    if (typeof draft.turbidity !== "boolean") return;
+    const saveKey = `${attempt}:${JSON.stringify(draft)}`;
+    if (autoSaveAttempt === saveKey) return;
+    autoSaveAttempt = saveKey;
+    const context =
+      activeBleForm &&
+      modal.open &&
+      ble.matches(activeBleForm.point, activeBleForm.runId)
+        ? activeBleForm
+        : null;
+    await storeFlush(
+      { id: job.pointId, code: job.code, target: job.target },
+      job.runId,
+      {
+        ...completedMeasurement.values,
+        turbidity: draft.turbidity,
+        note: draft.note,
+      },
+      true,
+      context,
+    );
+    if (user?.id === owner) {
+      if (context && context === activeBleForm && modal.open) modal.close();
+      await render();
+    }
+  } catch (error) {
+    if (user?.id === owner) ble.error = error.message;
+  } finally {
+    automaticRunning = false;
+    updateBlePanels();
+    syncBleForm();
+  }
+}
 function flushModal(p) {
   showModal(
     "Spülung dokumentieren",
     esc(p.code) + " · " + esc(p.address),
-    `<div class="measure-box">${icon("drop")}<div><strong>Geplante Spülmenge</strong><small>${esc(currentList.name)}</small></div><b>${number(p.target)} <small>m³</small></b></div><div class="ble-widget" data-ble-panel="form"></div><div class="form-row">${field("Temperatur vorher · °C", "temperature_before", "", "number", 'required min="0" max="100" step="any" placeholder="22,0"')}${field("Temperatur nachher · °C", "temperature_after", "", "number", 'required min="0" max="100" step="any" placeholder="14,0"')}</div>${field("Tatsächlich gespülte Menge · m³", "volume", "", "number", 'required min="0.001" max="1000000" step="any" placeholder="z. B. 2,6"')}<div class="field"><label for="f-turbidity">Trübung festgestellt?</label><select id="f-turbidity" name="turbidity" required><option value="">Bitte auswählen</option><option value="false">Nein – keine Trübung</option><option value="true">Ja – Trübung vorhanden</option></select></div><div class="field"><label for="f-note">Interne Bemerkung <span class="muted">(optional)</span></label><textarea id="f-note" name="note" maxlength="2000" rows="3" placeholder="Zum Beispiel: Hydrant undicht oder Beschädigung festgestellt"></textarea><small class="field-hint">Nur für Administration und berechtigte Mitarbeiter. Nicht für Betrachter oder den Ausdruck.</small></div><div class="notice">${icon("clock")}<span>Das Spüldatum wird beim Speichern automatisch eingetragen.<br>Mitarbeiter: <strong>${esc(user.name)}</strong><br>Das Protokoll bleibt als unveränderlicher Nachweis erhalten.</span></div>`,
+    `<div class="measure-box">${icon("drop")}<div><strong>Geplante Spülmenge</strong><small>${esc(currentList.name)}</small></div><b>${number(p.target)} <small>m³</small></b></div><div class="ble-widget" data-ble-panel="form"></div><div class="form-row">${field("Temperatur vorher · °C", "temperature_before", "", "number", 'required min="0" max="100" step="any" placeholder="22,0"')}${field("Temperatur nachher · °C", "temperature_after", "", "number", 'required min="0" max="100" step="any" placeholder="14,0"')}</div>${field("Tatsächlich gespülte Menge · m³", "volume", "", "number", 'required min="0.001" max="1000000" step="any" placeholder="z. B. 2,6"')}<div class="field"><label for="f-turbidity">Trübung festgestellt?</label><select id="f-turbidity" name="turbidity" required><option value="">Bitte auswählen</option><option value="false">Nein – keine Trübung</option><option value="true">Ja – Trübung vorhanden</option></select></div><div class="field"><label for="f-note">Interne Bemerkung <span class="muted">(optional)</span></label><textarea id="f-note" name="note" maxlength="2000" rows="3" placeholder="Zum Beispiel: Hydrant undicht oder Beschädigung festgestellt"></textarea><small class="field-hint">Nur für Administration und berechtigte Mitarbeiter. Nicht für Betrachter oder den Ausdruck.</small></div><div class="notice">${icon("clock")}<span>Bei READY wird automatisch abgerufen und gespeichert, sobald die Trübung ausgewählt ist. Interne Bemerkungen bitte vor Messende ergänzen.<br>Das Spüldatum wird beim Speichern automatisch eingetragen.<br>Mitarbeiter: <strong>${esc(user.name)}</strong><br>Das Protokoll bleibt als unveränderlicher Nachweis erhalten.</span></div>`,
     async (data) => {
       const context = activeBleForm;
-      const fromEsp32 = !!context?.imported;
       if (context?.serverSaved)
         throw Error(
           "Diese Messung ist bereits gespeichert. Bestätige nur noch den ESP32-Empfang.",
         );
+      const fromEsp32 = !!context?.imported;
       if (
-        ble.matches(p, currentList.run_id) &&
+        ble.matches(p, context.runId) &&
         (!fromEsp32 || ble.job.cancelPending)
       )
         throw Error("Frage zuerst die vollständigen Messdaten vom ESP32 ab.");
-      if (context) context.serverSaving = true;
-      updateBlePanels();
-      syncBleForm();
-      try {
-        const result = await send(`/points/${p.id}/flushes`, {
-          temperature_before: Number(data.temperature_before),
-          temperature_after: Number(data.temperature_after),
-          volume: Number(data.volume),
-          turbidity: data.turbidity === "true",
-          note: data.note ?? "",
-          ...(fromEsp32
-            ? {
-                source: "esp32",
-                request_id: ble.job.requestId,
-                run_id: context.runId,
-                measurement_point_code: p.code,
-                measurement_target: p.target,
-              }
-            : {}),
-        });
-        if (context) context.serverSaved = true;
-        let pendingAck = false;
-        if (fromEsp32) {
-          // The server's durable receipt is mandatory before sending an ACK.
-          ble.markSaved(result.receipt);
-          try {
-            await ble.acknowledge(result.receipt);
-          } catch {
-            pendingAck = true;
-          }
-        }
-        if (result.status === "review") location.hash = "#/lists";
-        toast(
-          pendingAck
-            ? "Messung gespeichert. Die ESP32-Empfangsbestätigung steht noch aus; bitte unter Geräte & Sensoren fortsetzen."
-            : result.status === "review"
-              ? "Alle Punkte bearbeitet. Die Liste wurde zur Prüfung übergeben."
-              : "Spülung erfolgreich gespeichert.",
-        );
-      } finally {
-        if (context) context.serverSaving = false;
-      }
+      await storeFlush(p, context.runId, data, fromEsp32, context);
     },
     "Spülung speichern",
   );
@@ -765,8 +929,28 @@ function flushModal(p) {
     serverSaving: false,
     serverSaved: false,
   };
+  for (const id of ["f-turbidity", "f-note"])
+    document.getElementById(id).addEventListener("change", () => {
+      currentBleDraft();
+      queueMicrotask(processReadyMeasurement);
+    });
+  document.getElementById("f-note").addEventListener("input", currentBleDraft);
+  if (
+    bleDraft &&
+    bleDraft.userId === user?.id &&
+    bleDraft.requestId === ble.job?.requestId &&
+    ble.matches(p, activeBleForm.runId)
+  )
+    document.getElementById("f-note").value = bleDraft.note;
+  if (
+    ble.matches(p, activeBleForm.runId) &&
+    typeof ble.job.turbidity === "boolean"
+  )
+    document.getElementById("f-turbidity").value = String(ble.job.turbidity);
   updateBlePanels();
   syncBleForm();
+  importCompletedMeasurement();
+  queueMicrotask(processReadyMeasurement);
 }
 async function pointDetail(p) {
   if (isAdmin() && currentList.status === "active" && !p.completed)
@@ -977,6 +1161,27 @@ function resetPasswordModal(u) {
     "Einmalpasswort generieren",
   );
 }
+function remainingTime(seconds) {
+  if (seconds === -1) return "Nicht berechenbar";
+  const total = Math.ceil(seconds),
+    hours = Math.floor(total / 3600),
+    minutes = Math.floor((total % 3600) / 60),
+    rest = total % 60;
+  return hours
+    ? `${hours} Std. ${minutes} Min.`
+    : minutes
+      ? `${minutes} Min. ${rest} Sek.`
+      : `${rest} Sek.`;
+}
+function livePanel() {
+  const live = ble.connected ? ble.live : null;
+  const active = live?.code && live.state !== "IDLE";
+  const mismatch =
+    active &&
+    ble.job &&
+    (live.code !== ble.job.code || live.target !== ble.job.target);
+  return `<section class="live-panel ${live?.state === "ERROR" ? "live-error" : ""}" aria-label="ESP32 Live-Daten"><div class="live-heading"><strong>${icon("wave")}Live-Messung</strong><span class="live-indicator ${live ? "fresh" : ""}">${live ? "Live · 1 Sekunde" : ble.connected ? "Warte auf aktuelle Daten" : "Offline"}</span></div><div class="live-metrics"><div><small>Durchfluss</small><strong data-live="flow">${live ? number(live.flow, 3) : "—"}<span>m³/h</span></strong></div><div><small>Temperatur</small><strong data-live="temperature">${live ? number(live.temperature, 2) : "—"}<span>°C</span></strong></div></div>${active ? `<div class="live-progress-head"><span>Spülpunkt <strong>${esc(live.code)}</strong></span><strong data-live="percent">${number(live.percent, 1)} %</strong></div><div class="live-progress" role="progressbar" aria-label="Spülfortschritt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${live.percent}"><span style="width:${live.percent}%"></span></div><div class="live-summary"><span>Gespült <strong data-live="volume">${number(live.volume)} / ${number(live.target)} m³</strong></span><span>Geschätzte Restzeit <strong data-live="remaining">${remainingTime(live.remaining)}</strong></span></div>` : ""}${mismatch ? '<p class="ble-error">Die Live-Daten gehören zu einem anderen Auftrag oder einer anderen Sollmenge. Sie werden nicht als Messergebnis übernommen.</p>' : ""}${!live ? '<p class="live-footnote">Keine aktuellen Live-Werte. Bei Verbindungsabbruch misst der ESP32 autonom weiter.</p>' : live.state === "ERROR" ? '<p class="ble-error">Der ESP32 meldet einen Messfehler. Live-Werte sind kein vollständiges Ergebnis; es wird kein ACK gesendet.</p>' : ""}</section>`;
+}
 function blePanel(context) {
   const supported = !!navigator.bluetooth && window.isSecureContext;
   const connected = ble.connected,
@@ -985,26 +1190,36 @@ function blePanel(context) {
   const linked = context && ble.matches(context.point, context.runId);
   const state = ble.deviceStatus;
   const status = state
-    ? `${STATUS_LABELS[state.state]} · ${state.code}`
+    ? `${STATUS_LABELS[state.state]}${state.code ? " · " + state.code : ""}`
     : connected
       ? "Verbunden. Wähle einen Spülpunkt für den Messauftrag."
       : "Noch nicht verbunden";
-  return `<div class="ble-head"><div class="ble-title">${icon("bluetooth")}<strong>${connected ? esc(ble.device.name || "SpuelPilot-ESP32") : "SpuelPilot-ESP32"}</strong><span class="badge ${connected ? "green" : ""}">${connected ? "Verbunden" : "Nicht verbunden"}</span></div><div class="actions">${connected ? '<button type="button" class="button secondary" data-ble-action="disconnect">Trennen</button>' : `<button type="button" class="button secondary" data-ble-action="connect" ${!supported || ble.busy ? "disabled" : ""}>${icon("bluetooth")}${ble.busy ? "Verbindet …" : "Bluetooth verbinden"}</button>`}</div></div><p class="ble-status" role="status" aria-live="polite">${esc(status)}</p>${!supported ? '<div class="notice">Web Bluetooth benötigt HTTPS und einen unterstützten Browser, z. B. Chrome auf Android. iOS Safari unterstützt es nicht. Die manuelle Erfassung bleibt verfügbar.</div>' : ""}${job ? `<p class="ble-job">Auftrag <strong>${esc(job.code)}</strong> · ${number(job.target)} m³${job.savedId ? " · Auf Server gespeichert; Empfang bestätigen" : ""}</p>` : ""}${context && !job?.savedId ? `<button type="button" class="button ble-exchange" data-ble-action="exchange" ${!connected || ble.busy || context?.serverSaving ? "disabled" : ""}>${icon(job && linked ? "drop" : "arrow")}${ble.busy ? "Übertragung läuft …" : job && linked ? "Messdaten abrufen" : "Spülpunkt an ESP32 senden"}</button>` : ""}${job?.savedId ? `<button type="button" class="button" data-ble-action="ack" ${!connected || ble.busy ? "disabled" : ""}>${icon("check")}Empfang am ESP32 bestätigen</button>` : ""}${job && !job.savedId && !job.received ? `<div class="ble-cancel"><button type="button" class="button danger" data-ble-action="cancel" ${!connected || ble.busy || context?.serverSaving ? "disabled" : ""}>${ble.job.cancelPending ? "Abbruch prüfen / erneut versuchen" : "Messung abbrechen"}</button>${context && linked && !ble.job.cancelPending ? '<button type="button" class="button secondary" data-ble-action="restart">Neue Messung starten</button>' : ""}</div>` : ""}${conflict ? '<p class="ble-hint">Beim Start dieses Spülpunkts wird gefragt, ob die laufende Messung zuerst abgebrochen werden soll.</p>' : ""}${context?.imported ? '<p class="ble-success">Messdaten übernommen. Trübung auswählen und die Spülung auf dem Server speichern. Erst danach wird ACK gesendet.</p>' : job && !job.savedId ? '<p class="ble-hint">Warte auf die Status-LED am ESP32 und frage dann die Messdaten ab. Das Ergebnis bleibt bis zur erfolgreichen Speicherung auf dem Gerät.</p>' : ""}${ble.error ? `<p class="ble-error" role="status">${esc(ble.error)}</p>` : ""}${job && !job.savedId ? '<button type="button" class="text-link ble-abandon" data-ble-action="recover">Server-Speicherstatus prüfen</button><button type="button" class="text-link ble-abandon" data-ble-action="abandon">Lokalen Auftrag verwerfen</button>' : ""}`;
+  return `<div class="ble-head"><div class="ble-title">${icon("bluetooth")}<strong>${connected ? esc(ble.device.name || "SpuelPilot-ESP32") : "SpuelPilot-ESP32"}</strong><span class="badge ${connected ? "green" : ""}">${connected ? "Verbunden" : "Nicht verbunden"}</span></div><div class="actions">${connected ? '<button type="button" class="button secondary" data-ble-action="disconnect">Trennen</button>' : `<button type="button" class="button secondary" data-ble-action="connect" ${!supported || ble.busy ? "disabled" : ""}>${icon("bluetooth")}${ble.busy ? "Verbindet …" : "Bluetooth verbinden"}</button>`}</div></div><p class="ble-status" role="status" aria-live="polite">${esc(status)}</p>${livePanel()}${!supported ? '<div class="notice">Web Bluetooth benötigt HTTPS und einen unterstützten Browser, z. B. Chrome auf Android. iOS Safari unterstützt es nicht. Die manuelle Erfassung bleibt verfügbar.</div>' : ""}${job ? `<p class="ble-job">Auftrag <strong>${esc(job.code)}</strong> · ${number(job.target)} m³${job.savedId ? " · Auf Server gespeichert; Empfang bestätigen" : ""}</p>` : ""}${context && !job?.savedId ? `<button type="button" class="button ble-exchange" data-ble-action="exchange" ${!connected || ble.busy || context?.serverSaving ? "disabled" : ""}>${icon(job && linked ? "drop" : "arrow")}${ble.busy ? "Übertragung läuft …" : job && linked ? "Messdaten abrufen" : "Spülpunkt an ESP32 senden"}</button>` : ""}${job?.savedId ? `<button type="button" class="button" data-ble-action="ack" ${!connected || ble.busy ? "disabled" : ""}>${icon("check")}Empfang am ESP32 bestätigen</button>` : ""}${job && !job.savedId && !job.received ? `<div class="ble-cancel"><button type="button" class="button danger" data-ble-action="cancel" ${!connected || ble.busy || context?.serverSaving ? "disabled" : ""}>${ble.job.cancelPending ? "Abbruch prüfen / erneut versuchen" : "Messung abbrechen"}</button>${context && linked && !ble.job.cancelPending ? '<button type="button" class="button secondary" data-ble-action="restart">Neue Messung starten</button>' : ""}</div>` : ""}${conflict ? '<p class="ble-hint">Beim Start dieses Spülpunkts wird gefragt, ob die laufende Messung zuerst abgebrochen werden soll.</p>' : ""}${context?.imported ? '<p class="ble-success">Messdaten übernommen. Nach Auswahl der Trübung wird bei READY automatisch gespeichert. Erst nach Serverbestätigung wird ACK gesendet.</p>' : job && !job.savedId ? '<p class="ble-hint">Bei READY wird das vollständige Ergebnis automatisch per GET abgerufen. Wähle die Trübung und ergänze Bemerkungen möglichst vor Messende. Ohne Trübungsangabe wird nicht gespeichert und kein ACK gesendet.</p>' : ""}${ble.error ? `<p class="ble-error" role="status">${esc(ble.error)}</p>` : ""}${job && !job.savedId && !context ? '<button type="button" class="button secondary" data-ble-action="open-job">Spülpunkt öffnen / Trübung ergänzen</button>' : ""}${job && !job.savedId ? '<button type="button" class="text-link ble-abandon" data-ble-action="recover">Server-Speicherstatus prüfen</button><button type="button" class="text-link ble-abandon" data-ble-action="abandon">Lokalen Auftrag verwerfen</button>' : ""}`;
 }
 function updateBlePanels() {
   document.querySelectorAll("[data-ble-panel]").forEach((panel) => {
     const context = panel.dataset.blePanel === "form" ? activeBleForm : null;
+    const focusedAction = panel.contains(document.activeElement)
+      ? document.activeElement.dataset.bleAction
+      : null;
     panel.innerHTML = blePanel(context);
+    if (focusedAction)
+      panel
+        .querySelector(`[data-ble-action="${focusedAction}"]`)
+        ?.focus({ preventScroll: true });
     panel.querySelectorAll("[data-ble-action]").forEach(
       (button) =>
         (button.onclick = async () => {
           try {
             const action = button.dataset.bleAction;
+            if (savingMeasurement && action !== "disconnect")
+              throw Error("Die Messung wird gerade gespeichert. Bitte warten.");
             if (action === "connect") await ble.connect();
             else if (action === "disconnect") ble.disconnect();
             else if (action === "exchange" || action === "restart") {
               if (!activeBleForm || context !== activeBleForm)
                 throw Error("Öffne den ausgewählten Spülpunkt erneut.");
+              currentBleDraft();
               const confirmAbort = (code) =>
                 window.confirm(
                   `Messung für ${code} läuft bereits oder ist noch offen. Soll sie abgebrochen und anschließend eine neue Messung für ${context.point.code} gestartet werden?`,
@@ -1021,6 +1236,7 @@ function updateBlePanels() {
                       context.runId,
                       confirmAbort,
                     );
+              if (ble.matches(context.point, context.runId)) currentBleDraft();
               if (result && context === activeBleForm && modal.open) {
                 for (const key of [
                   "volume",
@@ -1056,6 +1272,26 @@ function updateBlePanels() {
                   "Der ESP32 hat den Messabbruch bestätigt. Der Spülpunkt bleibt offen.",
                 );
               }
+            } else if (action === "open-job") {
+              const job = ble.job;
+              const list = lists.find((l) => l.run_id === job.runId);
+              if (!list)
+                throw Error(
+                  "Dieser Auftrag ist nicht mehr zur Bearbeitung freigegeben. Prüfe den Server-Speicherstatus.",
+                );
+              const rows = await api(
+                `/lists/${list.id}/points?run=${job.runId}`,
+              );
+              const point = rows.find(
+                (p) =>
+                  p.id === job.pointId &&
+                  p.code === job.code &&
+                  p.target === job.target,
+              );
+              if (!point)
+                throw Error("Der Spülpunkt passt nicht zum offenen Auftrag.");
+              currentList = list;
+              flushModal(point);
             } else if (action === "recover") {
               const receipt = await api(
                 `/measurement-receipts/${ble.job.requestId}`,
@@ -1120,7 +1356,8 @@ function syncBleForm() {
 function bindActions(root = app) {
   root.querySelectorAll("[data-action]").forEach(
     (b) =>
-      (b.onclick = async () => {
+      (b.onclick = async (event) => {
+        if (event.target.closest("[data-action]") !== b) return;
         try {
           const action = b.dataset.action,
             p = points.find((x) => x.id === Number(b.dataset.id));
@@ -1137,7 +1374,10 @@ function bindActions(root = app) {
           else if (action === "edit-list") listModal(true);
           else if (action === "go-lists") location.hash = "#/lists";
           else if (action === "new-point") pointModal();
-          else if (action === "point-detail") await pointDetail(p);
+          else if (action === "select-point") {
+            if (canDocument() && !p.completed) flushModal(p);
+            else await pointDetail(p);
+          } else if (action === "point-detail") await pointDetail(p);
           else if (action === "flush") flushModal(p);
           else if (action === "assign") await assignModal();
           else if (action === "restart") await assignModal(true);
@@ -1174,6 +1414,13 @@ function bindActions(root = app) {
       }),
   );
 }
+app.addEventListener("keydown", (event) => {
+  const row = event.target.closest('tr[data-action="select-point"]');
+  if (row && event.target === row && ["Enter", " "].includes(event.key)) {
+    event.preventDefault();
+    row.click();
+  }
+});
 window.addEventListener("hashchange", () => {
   if (modal.open) modal.close();
   render();

@@ -96,7 +96,8 @@ try {
     await page
       .getByRole("row")
       .filter({ has: page.getByText(code, { exact: true }) })
-      .getByRole("button", { name: "Spülung erfassen", exact: true })
+      .locator("td")
+      .nth(1)
       .click();
     await page
       .getByLabel("Temperatur vorher · °C", { exact: true })

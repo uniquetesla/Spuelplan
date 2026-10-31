@@ -1956,3 +1956,142 @@ tr.point-issue:hover {
 .ble-cancel .button {
   margin: 0 8px 8px 0;
 }
+
+/* Sensor telemetry is intentionally separate from the durable measurement form. */
+.live-panel {
+  background: linear-gradient(125deg, #edfaff, #f1fcf8);
+  border: 1px solid #c8e9ed;
+  border-radius: 16px;
+  padding: 18px;
+  margin: 14px 0;
+}
+.live-heading,
+.live-heading strong,
+.live-progress-head,
+.live-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.live-heading strong {
+  justify-content: flex-start;
+  color: #15516b;
+  font-size: 14px;
+}
+.live-heading svg {
+  width: 18px;
+  height: 18px;
+}
+.live-indicator {
+  font-size: 11px;
+  color: #617e89;
+}
+.live-indicator.fresh::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10a78a;
+  margin-right: 6px;
+}
+.live-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 18px 0 8px;
+}
+.live-metrics small {
+  display: block;
+  color: #587984;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+.live-metrics strong {
+  font-size: clamp(23px, 4vw, 32px);
+  color: #134e65;
+  font-variant-numeric: tabular-nums;
+}
+.live-metrics strong span {
+  font-size: 13px;
+  font-weight: 500;
+  margin-left: 6px;
+}
+.live-progress-head {
+  margin-top: 20px;
+  color: #346171;
+  font-size: 12px;
+}
+.live-progress {
+  height: 11px;
+  background: #d6eaf0;
+  border-radius: 20px;
+  overflow: hidden;
+  margin: 10px 0;
+}
+.live-progress > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #13a6d3, #14b89b);
+  border-radius: 20px;
+  transition: width 0.6s ease;
+}
+.live-summary {
+  align-items: flex-start;
+  font-size: 11px;
+  color: #587984;
+}
+.live-summary strong {
+  display: block;
+  font-size: 13px;
+  color: #23566a;
+  margin-top: 4px;
+}
+.live-summary > span:last-child {
+  text-align: right;
+}
+.live-footnote {
+  color: #6d8490;
+  font-size: 11px;
+  margin: 12px 0 0;
+}
+.live-error {
+  background: #fff3f3;
+  border-color: #edc5c5;
+}
+.point-selectable {
+  cursor: pointer;
+}
+.point-selectable:hover > td {
+  background-color: #eaf7fc;
+}
+.point-selectable:focus-visible {
+  outline: 3px solid #149ac8;
+  outline-offset: -3px;
+}
+@media (max-width: 480px) {
+  .live-panel {
+    padding: 14px;
+  }
+  .live-heading {
+    align-items: flex-start;
+  }
+  .live-indicator {
+    text-align: right;
+    max-width: 110px;
+  }
+  .live-summary {
+    gap: 8px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-progress > span {
+    transition: none;
+  }
+}
+@media print {
+  .live-panel {
+    display: none !important;
+  }
+}
