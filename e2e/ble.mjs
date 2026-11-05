@@ -258,6 +258,12 @@ try {
   });
   await page.goto(base);
   await page
+    .getByRole("button", {
+      name: "Wasserhahn öffnen und Anmeldung anzeigen",
+      exact: true,
+    })
+    .click();
+  await page
     .getByLabel("E-Mail-Adresse", { exact: true })
     .fill("lena@spuelplan.local");
   await page.getByLabel("Passwort", { exact: true }).fill(password);
