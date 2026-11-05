@@ -3594,3 +3594,49 @@ tr.point-issue:hover > td {
     color: #7a1729;
   }
 }
+
+/* Native progress keeps its real value under the strict content security policy. */
+progress.live-progress {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  height: 11px;
+  border: 0;
+  border-radius: 20px;
+  overflow: hidden;
+}
+progress.live-progress::-webkit-progress-bar {
+  background: #d0e7e9;
+  border-radius: 20px;
+}
+progress.live-progress::-webkit-progress-value {
+  background: linear-gradient(90deg, #2c96ad, #64b795);
+  border-radius: 20px;
+}
+progress.live-progress::-moz-progress-bar {
+  background: linear-gradient(90deg, #2c96ad, #64b795);
+  border-radius: 20px;
+}
+.note-existing p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-top: 8px;
+}
+.settings-actions {
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+.settings-admin {
+  margin-top: 22px;
+}
+@media (max-width: 620px) {
+  .settings-admin .panel-head {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+}
+.issue-note p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

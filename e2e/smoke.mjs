@@ -192,6 +192,29 @@ try {
   await openList();
   const internalNote = "Hydrant tropft – interne Prüfung erforderlich.";
   await documentPoint("UI-002", "2.7", internalNote);
+  await page.goto(base + "/#/reports");
+  await page
+    .getByRole("link", {
+      name: "Meine Messungen / Bemerkung nachtragen",
+      exact: true,
+    })
+    .click();
+  await expect(heading("Meine Messungen")).toBeVisible();
+  await page
+    .locator("tbody tr")
+    .filter({ hasText: "UI-002" })
+    .getByRole("button", { name: "Bemerkung hinzufügen", exact: true })
+    .click();
+  await expect(page.locator(".note-existing")).toContainText(internalNote);
+  await page
+    .getByLabel("Neue interne Bemerkung", { exact: true })
+    .fill("Nachträglich: Dichtung überprüfen.");
+  await page
+    .locator("dialog")
+    .getByRole("button", { name: "Bemerkung hinzufügen", exact: true })
+    .click();
+  await closed();
+  await page.goto(base + "/#/lists");
   await expect(heading("Spüllisten")).toBeVisible();
   await expect(page.getByRole("link", { name: /UI-Testgebiet/ })).toHaveCount(
     0,
@@ -262,6 +285,9 @@ try {
     page.getByRole("link", { name: /Interne Hinweise/ }),
   ).toHaveCount(0);
   await expect(page.locator("body")).not.toContainText(internalNote);
+  await expect(page.locator("body")).not.toContainText(
+    "Nachträglich: Dichtung überprüfen.",
+  );
   for (const value of await page
     .locator("tbody tr td:last-child")
     .allTextContents())

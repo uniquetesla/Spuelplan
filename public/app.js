@@ -1,6 +1,7 @@
+import { CompletionSound } from "./completion-sound.js";
 import { FlowRecorder } from "./flow-recorder.js";
 import { flowChart as renderFlowChart, flowDuration } from "./flow-chart.js";
-import { Esp32Client, STATUS_LABELS } from "./esp32.js";
+import { Esp32Client, STATUS_LABELS, measurementProgress } from "./esp32.js";
 const icons = {
   drop: '<path d="M12 3s-6.5 7.1-6.5 11.2a6.5 6.5 0 0 0 13 0C18.5 10.1 12 3 12 3Z"/><path d="M9 15a3 3 0 0 0 3 3"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
@@ -80,7 +81,8 @@ let user,
   loadVersion = 0,
   flowRecords = [],
   flowDetail = null,
-  flowSeries = [];
+  flowSeries = [],
+  ownFlushes = [];
 const app = document.querySelector("#app"),
   modal = document.querySelector("#modal");
 let bleStorage = null;
@@ -88,6 +90,15 @@ try {
   bleStorage = window.localStorage;
 } catch {}
 const ble = new Esp32Client({ storage: bleStorage });
+const completionSound = new CompletionSound({ storage: bleStorage });
+for (const event of ["pointerdown", "keydown"])
+  document.addEventListener(
+    event,
+    () => {
+      if (user?.completion_sound) void completionSound.unlock().catch(() => {});
+    },
+    { capture: true },
+  );
 async function flowRequest(path, body, method = "GET") {
   try {
     return await api(path, {
@@ -207,6 +218,7 @@ function renderAuth() {
     "has-measurement-dock",
     "has-two-measurements",
   );
+  completionSound.bindUser(null);
   void flowRecorder.bindUser(null);
 
   ble.bindUser(null);
@@ -250,6 +262,7 @@ const navItems = () => [
   ...(user.role !== "viewer"
     ? [["devices", "Geräte & Sensoren", "bluetooth"]]
     : []),
+  ["settings", "Einstellungen", "edit"],
   ["account", "Mein Passwort", "lock"],
 ];
 function layout(content, section) {
@@ -308,7 +321,7 @@ function reportTable(rows, compact = false) {
       "Noch keine Spülungen",
       "Sobald eine Spülung dokumentiert wird, findest du hier das Protokoll.",
     );
-  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th>${compact ? "" : "<th>Soll m³</th>"}<th>Ist m³</th>${compact ? "" : "<th>Temp. vorher</th><th>Temp. nachher</th>"}<th>Trübung</th><th>Mitarbeiter</th><th>Datum</th>${isAdmin() && !compact ? '<th class="no-print">Aktionen</th>' : ""}</tr></thead><tbody>${rows.map((f) => `<tr><td><span class="point-id">${esc(f.code)}</span><span class="sub">Durchgang ${f.run_number}</span></td><td><strong>${esc(f.address)}</strong>${compact ? `<span class="sub">${esc(f.list_name)}</span>` : ""}</td>${compact ? "" : `<td>${number(f.target)}</td>`}<td><strong>${number(f.volume)}${compact ? " m³" : ""}</strong></td>${compact ? "" : `<td>${number(f.temperature_before)} °C</td><td>${number(f.temperature_after)} °C</td>`}<td><span class="badge ${f.turbidity ? "amber" : "green"}">${f.turbidity ? "Ja" : "Nein"}</span></td><td>${esc(f.employee)}</td><td>${date(f.flushed_at)}</td>${isAdmin() && !compact ? `<td class="no-print"><button class="table-action delete-link" data-action="delete-record" data-id="${f.id}">Protokoll löschen ${icon("close")}</button></td>` : ""}</tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Spülpunkt ID</th><th>Adresse</th>${compact ? "" : "<th>Soll m³</th>"}<th>Ist m³</th>${compact ? "" : "<th>Temp. vorher</th><th>Temp. nachher</th>"}<th>Trübung</th><th>Mitarbeiter</th><th>Datum</th>${user.role !== "viewer" && !compact ? '<th class="no-print">Aktionen</th>' : ""}</tr></thead><tbody>${rows.map((f) => `<tr><td><span class="point-id">${esc(f.code)}</span><span class="sub">Durchgang ${f.run_number}</span></td><td><strong>${esc(f.address)}</strong>${compact ? `<span class="sub">${esc(f.list_name)}</span>` : ""}</td>${compact ? "" : `<td>${number(f.target)}</td>`}<td><strong>${number(f.volume)}${compact ? " m³" : ""}</strong></td>${compact ? "" : `<td>${number(f.temperature_before)} °C</td><td>${number(f.temperature_after)} °C</td>`}<td><span class="badge ${f.turbidity ? "amber" : "green"}">${f.turbidity ? "Ja" : "Nein"}</span></td><td>${esc(f.employee)}</td><td>${date(f.flushed_at)}</td>${user.role !== "viewer" && !compact ? `<td class="no-print"><div class="actions"><button class="table-action" data-action="add-note" data-id="${f.id}">Bemerkung hinzufügen ${icon("edit")}</button>${isAdmin() ? `<button class="table-action delete-link" data-action="delete-record" data-id="${f.id}">Protokoll löschen ${icon("close")}</button>` : ""}</div></td>` : ""}</tr>`).join("")}</tbody></table></div>`;
 }
 function listsPage() {
   return (
@@ -437,6 +450,19 @@ function reportCards(runs) {
   );
 }
 function reportsPage() {
+  if (
+    new URLSearchParams(location.hash.split("?")[1] || "").get("own") === "1" &&
+    user.role !== "viewer"
+  )
+    return (
+      `<a class="back" href="#/reports">${icon("back")}Zurück zu den Spülprotokollen</a>` +
+      heading(
+        "Meine Messungen",
+        "Eigene Spülungen bleiben für nachträgliche interne Bemerkungen erreichbar.",
+        button("Liste drucken", "print", "print", true),
+      ) +
+      `<div class="print-heading"><h1>Meine Spülungen</h1><p>${esc(user.name)} · ${date(new Date().toISOString())}</p></div><section class="panel">${reportTable(ownFlushes)}</section>`
+    );
   const params = new URLSearchParams(location.hash.split("?")[1] || ""),
     selectedRun = params.get("run"),
     selectedList = params.get("list"),
@@ -451,7 +477,9 @@ function reportsPage() {
       heading(
         "Spülprotokolle",
         "Wähle eine Spülliste aus. Jeder Durchlauf enthält seine eigenen Messwerte und seinen eigenen Ausdruck.",
-        "",
+        user.role !== "viewer"
+          ? '<a class="button secondary" href="#/reports?own=1">Meine Messungen / Bemerkung nachtragen</a>'
+          : "",
         "DOKUMENTATION & NACHWEISE",
       ) +
       `<div class="print-heading"><h1>Spülprotokolle</h1><p>Bitte zuerst eine Spülliste zum Drucken auswählen.</p></div><div class="toolbar"><div class="search">${icon("search")}<input id="report-search" type="search" placeholder="Spülliste suchen …" aria-label="Spülprotokolle suchen"></div></div><div class="list-grid no-print" id="report-cards">${reportCards(runs.filter((r) => !selectedList || String(r.listId) === selectedList))}</div>`
@@ -551,9 +579,9 @@ function currentMeasurementCards() {
               ? STATUS_LABELS[state.state]
               : "Messauftrag offen",
       metric: live
-        ? `${number(live.volume)} / ${number(job.target)} m³ · ${number(live.percent, 1)} %`
+        ? `${number(live.volume)} / ${number(job.target)} m³ · ${number(measurementProgress(live), 1)} %`
         : `Soll ${number(job.target)} m³`,
-      percent: live?.percent ?? null,
+      percent: live ? measurementProgress(live) : null,
       active: !!live && !job.savedId && live.state !== "ERROR",
     });
   }
@@ -813,6 +841,7 @@ async function render() {
   if (user.must_change_password) return renderPasswordRequired();
   const version = ++loadVersion,
     owner = user.id;
+  completionSound.bindUser(user.id, user.completion_sound);
   ble.bindUser(user.role === "viewer" ? null : user.id);
   await flowRecorder.bindUser(user.role === "viewer" ? null : user.id);
   if (version !== loadVersion || user?.id !== owner) return;
@@ -857,6 +886,13 @@ async function render() {
         return;
       }
       layout(notesPage(), "notes");
+    } else if (section === "settings") {
+      const preference = await api("/account/preferences");
+      if (version !== loadVersion || user?.id !== owner) return;
+      user.completion_sound = preference.completion_sound;
+      completionSound.bindUser(owner, user.completion_sound);
+      layout(personalSettingsPage(), "settings");
+      bindPersonalSettings();
     } else if (section === "account") {
       layout(accountPage(), "account");
       bindPasswordForm();
@@ -925,6 +961,17 @@ async function render() {
           empty("Keine Treffer", "Versuche einen anderen Suchbegriff.");
       };
     } else if (section === "reports") {
+      if (
+        new URLSearchParams(location.hash.split("?")[1] || "").get("own") ===
+        "1"
+      ) {
+        if (user.role === "viewer") {
+          location.hash = "#/reports";
+          return;
+        }
+        ownFlushes = await api("/my-flushes");
+        if (version !== loadVersion) return;
+      }
       layout(reportsPage(), "reports");
       const search = document.querySelector("#report-search");
       if (search)
@@ -984,6 +1031,7 @@ function showModal(title, subtitle, body, onSubmit, submitLabel = "Speichern") {
     }
   };
   modal.showModal();
+  bindActions(modal);
 }
 function listModal(edit = false) {
   const l = edit ? currentList : {};
@@ -1263,6 +1311,7 @@ async function processReadyMeasurement() {
       );
       if (user?.id !== owner || ble.job?.requestId !== requestId) return;
       completedMeasurement = { requestId, userId: owner, values };
+      void completionSound.notify(owner, requestId);
       importCompletedMeasurement();
     }
     if (job.savedId) {
@@ -1456,6 +1505,70 @@ function deleteRunModal() {
     "Durchlauf löschen",
   );
 }
+async function addInternalNoteModal(id) {
+  const info = await api(`/flushes/${id}/internal-notes`),
+    request_id = crypto.randomUUID();
+  showModal(
+    "Interne Bemerkung nachtragen",
+    `${esc(info.code)} · ${esc(info.address)} · ${date(info.flushed_at)}`,
+    (info.content
+      ? `<div class="notice note-existing"><strong>Vorhandene Bemerkungen</strong><p>${esc(info.content)}</p></div>`
+      : "") +
+      `<div class="field"><label for="f-late-note">Neue interne Bemerkung</label><textarea id="f-late-note" name="content" required maxlength="2000" rows="4" placeholder="Zum Beispiel: Defekt nach der Spülung festgestellt"></textarea></div><div class="notice">Nur intern sichtbar. Der Punkt erscheint erneut rot unter den internen Hinweisen, auch wenn ein früherer Hinweis bereits quittiert wurde.</div>`,
+    async (data) => {
+      await send(`/flushes/${id}/internal-notes`, { ...data, request_id });
+      toast("Interne Bemerkung ergänzt.");
+    },
+    "Bemerkung hinzufügen",
+  );
+}
+function personalSettingsPage() {
+  return (
+    heading(
+      "Einstellungen",
+      "Persönliche Einstellungen für dein Benutzerkonto.",
+    ) +
+    `<section class="panel account-panel"><div class="panel-head"><div><h2>Abschlusston bei ESP32-Spülungen</h2><p>Diese Einstellung gilt nur für ${esc(user.name)} und wird im Benutzerkonto gespeichert.</p></div></div><form id="sound-settings" class="account-body"><label class="checkbox-row"><input type="checkbox" name="completion_sound" ${user.completion_sound ? "checked" : ""}><span><strong>Abschlusston aktivieren</strong><small>Ein kurzer Ton signalisiert das vollständig empfangene ESP32-Messergebnis. Die Serverspeicherung wird separat bestätigt.</small></span></label><p class="field-hint">Für die Tonausgabe gegebenenfalls zuerst „Ton testen“ drücken. Geräte-Lautstärke und Browser müssen Ton zulassen.</p><div class="actions settings-actions"><button type="button" class="button secondary" data-action="test-sound">Ton testen</button><button type="submit" class="button">Einstellungen speichern</button></div><p id="sound-settings-status" role="status" class="field-hint"></p></form></section>${isAdmin() ? `<section class="panel account-panel settings-admin"><div class="panel-head"><div><h2>Administration</h2><p>Statistik für den internen Arbeitsbereich verwalten.</p></div>${button("Statistik zurücksetzen", "statistics-settings", "edit", true)}</div></section>` : ""}`
+  );
+}
+function bindPersonalSettings() {
+  const form = document.querySelector("#sound-settings");
+  form
+    .querySelector("[name=completion_sound]")
+    .addEventListener("change", (event) => {
+      if (event.target.checked)
+        void completionSound.unlock(true).catch((error) => {
+          document.querySelector("#sound-settings-status").textContent =
+            error.message;
+        });
+    });
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const owner = user.id,
+      enabled = form.elements.completion_sound.checked,
+      submit = form.querySelector("[type=submit]");
+    submit.disabled = true;
+    if (enabled) void completionSound.unlock(true).catch(() => {});
+    try {
+      const saved = await send(
+        "/account/preferences",
+        { completion_sound: enabled },
+        "PUT",
+      );
+      if (user?.id !== owner) return;
+      user.completion_sound = saved.completion_sound;
+      completionSound.bindUser(owner, saved.completion_sound);
+      document.querySelector("#sound-settings-status").textContent =
+        "Persönliche Einstellung gespeichert.";
+    } catch (error) {
+      if (document.querySelector("#sound-settings-status"))
+        document.querySelector("#sound-settings-status").textContent =
+          error.message;
+    } finally {
+      submit.disabled = false;
+    }
+  };
+}
 function settingsModal() {
   if (!isAdmin()) return;
   showModal(
@@ -1599,7 +1712,7 @@ function livePanel() {
     active &&
     ble.job &&
     (live.code !== ble.job.code || live.target !== ble.job.target);
-  return `<section class="live-panel ${live?.state === "ERROR" ? "live-error" : ""}" aria-label="ESP32 Live-Daten"><div class="live-heading"><strong>${icon("wave")}Live-Messung</strong><span class="live-indicator ${live ? "fresh" : ""}">${live ? "Live · 1 Sekunde" : ble.connected ? "Warte auf aktuelle Daten" : "Offline"}</span></div><div class="live-metrics"><div><small>Durchfluss</small><strong data-live="flow">${live ? number(live.flow, 3) : "—"}<span>m³/h</span></strong></div><div><small>Temperatur</small><strong data-live="temperature">${live ? number(live.temperature, 2) : "—"}<span>°C</span></strong></div></div>${active ? `<div class="live-progress-head"><span>Spülpunkt <strong>${esc(live.code)}</strong></span><strong data-live="percent">${number(live.percent, 1)} %</strong></div><div class="live-progress" role="progressbar" aria-label="Spülfortschritt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${live.percent}"><span style="width:${live.percent}%"></span></div><div class="live-summary"><span>Gespült <strong data-live="volume">${number(live.volume)} / ${number(live.target)} m³</strong></span><span>Geschätzte Restzeit <strong data-live="remaining">${remainingTime(live.remaining)}</strong></span></div>` : ""}${mismatch ? '<p class="ble-error">Die Live-Daten gehören zu einem anderen Auftrag oder einer anderen Sollmenge. Sie werden nicht als Messergebnis übernommen.</p>' : ""}${!live ? '<p class="live-footnote">Keine aktuellen Live-Werte. Bei Verbindungsabbruch misst der ESP32 autonom weiter.</p>' : live.state === "ERROR" ? '<p class="ble-error">Der ESP32 meldet einen Messfehler. Live-Werte sind kein vollständiges Ergebnis; es wird kein ACK gesendet.</p>' : ""}</section>`;
+  return `<section class="live-panel ${live?.state === "ERROR" ? "live-error" : ""}" aria-label="ESP32 Live-Daten"><div class="live-heading"><strong>${icon("wave")}Live-Messung</strong><span class="live-indicator ${live ? "fresh" : ""}">${live ? "Live · 1 Sekunde" : ble.connected ? "Warte auf aktuelle Daten" : "Offline"}</span></div><div class="live-metrics"><div><small>Durchfluss</small><strong data-live="flow">${live ? number(live.flow, 3) : "—"}<span>m³/h</span></strong></div><div><small>Temperatur</small><strong data-live="temperature">${live ? number(live.temperature, 2) : "—"}<span>°C</span></strong></div></div>${active ? `<div class="live-progress-head"><span>Spülpunkt <strong>${esc(live.code)}</strong></span><strong data-live="percent">${number(measurementProgress(live), 1)} %</strong></div><progress class="live-progress" max="100" value="${measurementProgress(live) ?? 0}" aria-label="Spülfortschritt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${measurementProgress(live) ?? 0}"></progress><div class="live-summary"><span>Gespült <strong data-live="volume">${number(live.volume)} / ${number(live.target)} m³</strong></span><span>Geschätzte Restzeit <strong data-live="remaining">${remainingTime(live.remaining)}</strong></span></div>` : ""}${mismatch ? '<p class="ble-error">Die Live-Daten gehören zu einem anderen Auftrag oder einer anderen Sollmenge. Sie werden nicht als Messergebnis übernommen.</p>' : ""}${!live ? '<p class="live-footnote">Keine aktuellen Live-Werte. Bei Verbindungsabbruch misst der ESP32 autonom weiter.</p>' : live.state === "ERROR" ? '<p class="ble-error">Der ESP32 meldet einen Messfehler. Live-Werte sind kein vollständiges Ergebnis; es wird kein ACK gesendet.</p>' : ""}</section>`;
 }
 function blePanel(context) {
   const supported = !!navigator.bluetooth && window.isSecureContext;
@@ -1660,6 +1773,7 @@ function updateBlePanels() {
                     );
               if (ble.matches(context.point, context.runId)) currentBleDraft();
               if (result && context === activeBleForm && modal.open) {
+                void completionSound.notify(user.id, ble.job.requestId);
                 for (const key of [
                   "volume",
                   "temperature_before",
@@ -1808,6 +1922,13 @@ function bindActions(root = app) {
           else if (action === "ack-notes") {
             await send("/internal-notes/acknowledge", {
               ids: b.dataset.ids.split(",").map(Number),
+              revisions: Object.fromEntries(
+                notes
+                  .filter((n) =>
+                    b.dataset.ids.split(",").includes(String(n.id)),
+                  )
+                  .map((n) => [n.id, n.revision]),
+              ),
             });
             toast(
               "Bemerkungen quittiert. Der Spülpunkt wurde aus den offenen Hinweisen entfernt.",
@@ -1829,6 +1950,12 @@ function bindActions(root = app) {
             );
           else if (action === "delete-run") deleteRunModal();
           else if (action === "settings") settingsModal();
+          else if (action === "statistics-settings") settingsModal();
+          else if (action === "test-sound") {
+            await completionSound.play(true);
+            toast("Testton abgespielt.");
+          } else if (action === "add-note")
+            await addInternalNoteModal(Number(b.dataset.id));
           else if (action === "new-flow") newFlowModal();
           else if (action === "edit-flow") editFlowModal();
           else if (action === "delete-flow") deleteFlowModal();

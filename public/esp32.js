@@ -163,6 +163,18 @@ export function parseLive(frame) {
     remaining,
   };
 }
+// Derive visual progress from measured volume; firmware percentage is advisory.
+export function measurementProgress(live) {
+  if (
+    !live ||
+    !Number.isFinite(live.volume) ||
+    !Number.isFinite(live.target) ||
+    live.target <= 0 ||
+    live.volume < 0
+  )
+    return null;
+  return Math.min(100, Math.max(0, (live.volume / live.target) * 100));
+}
 export function parseMessage(frame) {
   if (typeof frame !== "string" || new TextEncoder().encode(frame).length > 512)
     throw Error("Ungültige ESP32-Nachricht.");
