@@ -4085,6 +4085,10 @@ progress.live-progress::-moz-progress-bar {
   tbody tr:hover {
     background: #ffffff04;
   }
+  .point-selectable:not(.point-complete):not(.point-working):not(.point-issue):is(:hover, :focus-visible) > td {
+    background-color: #26344d;
+  }
+
   .table-action {
     color: #b3b7f6;
   }
