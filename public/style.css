@@ -4614,3 +4614,169 @@ progress.live-progress::-moz-progress-bar {
     color-scheme: light;
   }
 }
+
+/* Interactive water tap entry: visual toggle only, authentication stays server-side. */
+@media screen {
+  .faucet-auth {
+    grid-template-columns: minmax(0, 660px);
+    justify-content: center;
+    align-content: center;
+  }
+  .faucet-auth.faucet-open {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .faucet-auth .auth-art {
+    display: flex;
+    min-height: 680px;
+    padding: 38px;
+  }
+  .faucet-auth .auth-art:after {
+    pointer-events: none;
+  }
+  .faucet-intro {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    padding: 24px 0;
+  }
+  .faucet-intro .login-role {
+    display: block;
+  }
+  .faucet-intro h1 {
+    font-size: clamp(28px, 4vw, 42px);
+    margin-top: 24px;
+  }
+  .faucet-intro p {
+    margin: 16px auto 0;
+  }
+  .faucet-toggle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    max-width: 320px;
+    margin: 0 auto;
+    padding: 0 12px 12px;
+    border: 0;
+    border-radius: 28px;
+    background: transparent;
+    color: #edf4ff;
+    font: inherit;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .faucet-toggle:focus-visible {
+    outline: 3px solid #9bafff;
+    outline-offset: 5px;
+  }
+  .faucet-toggle:hover {
+    background: #b9d7ff08;
+  }
+  .faucet-toggle .faucet-drawing {
+    width: 100%;
+    height: auto;
+    overflow: visible;
+    filter: drop-shadow(0 12px 28px #03071980);
+  }
+  .faucet-switch-label {
+    font-weight: 650;
+    font-size: 15px;
+  }
+  .faucet-switch-hint {
+    margin-top: 8px;
+    color: #aabbd3;
+    font-size: 12px;
+  }
+  .faucet-handle {
+    transform-origin: 140px 76px;
+    transition: transform 0.65s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .faucet-open .faucet-handle {
+    transform: rotate(-35deg);
+  }
+  .faucet-stream,
+  .faucet-drops,
+  .faucet-pool {
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  .faucet-open .faucet-stream,
+  .faucet-open .faucet-drops {
+    opacity: 1;
+  }
+  .faucet-pool {
+    fill: #80dcff;
+  }
+  .faucet-open .faucet-pool {
+    opacity: 0.3;
+    animation: tap-ripple 1.8s ease-in-out infinite;
+    transform-origin: 202px 245px;
+  }
+  .faucet-open .faucet-drops {
+    animation: tap-drops 0.8s linear infinite;
+  }
+  .faucet-auth .auth-right[hidden] {
+    display: none;
+  }
+  .faucet-open .auth-right {
+    animation: tap-reveal 0.4s ease both;
+  }
+  @keyframes tap-drops {
+    from {
+      transform: translateY(-7px);
+    }
+    to {
+      transform: translateY(7px);
+    }
+  }
+  @keyframes tap-ripple {
+    50% {
+      transform: scaleX(1.2);
+      opacity: 0.15;
+    }
+  }
+  @keyframes tap-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @media (max-width: 850px) {
+    .faucet-auth,
+    .faucet-auth.faucet-open {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .faucet-auth .auth-art {
+      min-height: auto;
+      padding: 26px;
+    }
+    .faucet-open .faucet-intro h1,
+    .faucet-open .faucet-intro > p {
+      display: none;
+    }
+    .faucet-open .faucet-drawing {
+      width: 150px;
+    }
+    .faucet-open .faucet-intro {
+      padding: 20px 0 12px;
+    }
+    .faucet-open .faucet-intro .login-role {
+      display: none;
+    }
+    .faucet-auth .auth-right {
+      padding: 32px 24px;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .faucet-auth *,
+    .faucet-auth *:before,
+    .faucet-auth *:after {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+}

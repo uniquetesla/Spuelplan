@@ -115,6 +115,12 @@ try {
   });
   async function login(email) {
     await page.goto(base);
+    await page
+      .getByRole("button", {
+        name: "Wasserhahn öffnen und Anmeldung anzeigen",
+        exact: true,
+      })
+      .click();
     await page.getByLabel("E-Mail-Adresse", { exact: true }).fill(email);
     await page.getByLabel("Passwort", { exact: true }).fill(password);
     await page.getByRole("button", { name: "Anmelden", exact: true }).click();

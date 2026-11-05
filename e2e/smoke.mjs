@@ -59,6 +59,25 @@ try {
   const closed = () => expect(page.locator("dialog")).not.toBeVisible();
   async function login(email, loginPassword = password, forced = false) {
     await page.goto(base);
+    await expect(page.locator("#login-panel")).toBeHidden();
+    await page.locator("#faucet-toggle").focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#login-panel")).toBeVisible();
+    await expect(page.locator("#faucet-toggle")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await page
+      .getByLabel("E-Mail-Adresse", { exact: true })
+      .fill("draft@example.local");
+    await page.locator("#faucet-toggle").click();
+    await expect(page.locator("#login-panel")).toBeHidden();
+    await page
+      .getByRole("button", {
+        name: "Wasserhahn öffnen und Anmeldung anzeigen",
+        exact: true,
+      })
+      .click();
     await expect(page).toHaveTitle("SpülPilot · Stadtwerke Heppenheim");
     await expect(page.locator(".auth-demo")).toHaveCount(0);
     await expect(page.locator(".auth-security")).toContainText(
@@ -74,7 +93,10 @@ try {
   async function logout() {
     await click("Abmelden");
     await expect(
-      page.getByRole("button", { name: "Anmelden", exact: true }),
+      page.getByRole("button", {
+        name: "Wasserhahn öffnen und Anmeldung anzeigen",
+        exact: true,
+      }),
     ).toBeVisible();
   }
   async function openList() {
@@ -135,6 +157,12 @@ try {
     await closed();
   }
   await page.goto(base);
+  await page
+    .getByRole("button", {
+      name: "Wasserhahn öffnen und Anmeldung anzeigen",
+      exact: true,
+    })
+    .click();
   await page.screenshot({
     path: "/tmp/spuelpilot-glass-login.png",
     fullPage: true,
