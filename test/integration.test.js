@@ -2019,3 +2019,278 @@ test("Lange Durchflussmessungen behalten alle Rohwerte; die Diagrammansicht begr
     "completed",
   );
 });
+
+test("Interne Bemerkungen können nach ESP-Abschluss ergänzt werden, ohne Messwerte, Betrachtersicht oder Übertragungswiederholung zu verändern", async () => {
+  const employeeSession = await login("employee@example.de"),
+    viewerSession = await login("other@example.de"),
+    colleague = await login("flow-colleague@example.de");
+  const listId = (
+    await request("/lists", {
+      session: admin,
+      body: { name: "Nachträgliche Bemerkungen" },
+    })
+  ).data.id;
+  const point = (
+    await request("/points", {
+      session: admin,
+      body: {
+        list_id: listId,
+        code: "LATE-NOTE",
+        address: "Heppenheim",
+        target: 2.5,
+      },
+    })
+  ).data;
+  await request(`/lists/${listId}/assignments`, {
+    session: admin,
+    method: "PUT",
+    body: { user_ids: [employeeSession.user.id] },
+  });
+  const runId = (await lists(employeeSession)).data.find(
+    (l) => l.id === listId,
+  ).run_id;
+  const data = {
+    ...values,
+    source: "esp32",
+    request_id: crypto.randomUUID(),
+    run_id: runId,
+    measurement_point_code: "LATE-NOTE",
+    measurement_target: 2.5,
+  };
+  const saved = await request(`/points/${point.id}/flushes`, {
+    session: employeeSession,
+    body: data,
+  });
+  assert.equal(saved.status, 201);
+  assert.equal(
+    (await lists(employeeSession)).data.some((l) => l.id === listId),
+    false,
+  );
+  assert.ok(
+    (await request("/my-flushes", { session: employeeSession })).data.some(
+      (f) => f.id === saved.data.id,
+    ),
+  );
+  for (const path of [
+    "/my-flushes",
+    `/flushes/${saved.data.id}/internal-notes`,
+  ])
+    assert.equal((await request(path, { session: viewerSession })).status, 403);
+  assert.equal(
+    (
+      await request(`/flushes/${saved.data.id}/internal-notes`, {
+        session: colleague,
+      })
+    ).status,
+    404,
+  );
+  const addition = {
+    content: "Hydrant nachträglich undicht festgestellt",
+    request_id: crypto.randomUUID(),
+  };
+  assert.equal(
+    (
+      await request(`/flushes/${saved.data.id}/internal-notes`, {
+        session: viewerSession,
+        body: addition,
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request(`/flushes/${saved.data.id}/internal-notes`, {
+        session: employeeSession,
+        body: addition,
+        csrf: false,
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request(`/flushes/${saved.data.id}/internal-notes`, {
+        session: employeeSession,
+        body: { ...addition, content: "x".repeat(2001) },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(`/flushes/${saved.data.id}/internal-notes`, {
+        session: employeeSession,
+        body: addition,
+      })
+    ).status,
+    201,
+  );
+  assert.equal(
+    (
+      await request(`/flushes/${saved.data.id}/internal-notes`, {
+        session: employeeSession,
+        body: addition,
+      })
+    ).status,
+    200,
+  );
+  const first = (
+    await request("/internal-notes", { session: admin })
+  ).data.find((n) => n.point_id === point.id);
+  assert.equal(first.content, addition.content);
+  assert.equal(first.revision, 1);
+  assert.equal(
+    (
+      await request(`/points/${point.id}/flushes`, {
+        session: employeeSession,
+        body: data,
+      })
+    ).data.id,
+    saved.data.id,
+    "an added note must not invalidate the original ESP idempotency payload",
+  );
+  await request("/internal-notes/acknowledge", {
+    session: admin,
+    body: { ids: [first.id], revisions: { [first.id]: 1 } },
+  });
+  const second = {
+    content: "Weitere interne Prüfung",
+    request_id: crypto.randomUUID(),
+  };
+  assert.equal(
+    (
+      await request(`/flushes/${saved.data.id}/internal-notes`, {
+        session: employeeSession,
+        body: second,
+      })
+    ).status,
+    201,
+  );
+  const reopened = (
+    await request("/internal-notes", { session: admin })
+  ).data.find((n) => n.id === first.id);
+  assert.equal(reopened.revision, 2);
+  assert.equal(reopened.content, addition.content + "\n\n" + second.content);
+  assert.equal(
+    (
+      await request("/internal-notes/acknowledge", {
+        session: admin,
+        body: { ids: [first.id], revisions: { [first.id]: 1 } },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await request("/internal-notes/acknowledge", {
+        session: admin,
+        body: { ids: [first.id] },
+      })
+    ).status,
+    409,
+  );
+  await request(`/lists/${listId}/publish`, { session: admin, body: {} });
+  const published = (await records(viewerSession)).data.find(
+    (f) => f.id === saved.data.id,
+  );
+  assert.ok(published);
+  assert.equal(JSON.stringify(published).includes(addition.content), false);
+  assert.equal(
+    (
+      await request(`/points/${point.id}/flushes`, {
+        session: employeeSession,
+        body: data,
+      })
+    ).status,
+    200,
+  );
+  const db = new DatabaseSync(join(dir, "test.sqlite"));
+  assert.equal(
+    db
+      .prepare(
+        "SELECT count(*) n FROM internal_note_additions WHERE flush_id=?",
+      )
+      .get(saved.data.id).n,
+    2,
+  );
+  assert.equal(
+    db.prepare("SELECT volume FROM flushes WHERE id=?").get(saved.data.id)
+      .volume,
+    values.volume,
+  );
+  db.close();
+});
+
+test("Abschlusston wird pro Konto gespeichert; Benutzer können keine fremden Einstellungen ändern", async () => {
+  const employeeSession = await login("employee@example.de"),
+    viewerSession = await login("other@example.de");
+  assert.equal(
+    (await request("/account/preferences", { session: employeeSession })).data
+      .completion_sound,
+    false,
+  );
+  assert.equal(
+    (
+      await request("/account/preferences", {
+        session: employeeSession,
+        method: "PUT",
+        body: { completion_sound: "true" },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request("/account/preferences", {
+        session: employeeSession,
+        method: "PUT",
+        body: { completion_sound: true },
+        csrf: false,
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request("/account/preferences", {
+        session: employeeSession,
+        method: "PUT",
+        body: { completion_sound: true, user_id: viewerSession.user.id },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await request("/account/preferences", { session: viewerSession })).data
+      .completion_sound,
+    false,
+  );
+  assert.equal(
+    (await request("/me", { session: employeeSession })).data.user
+      .completion_sound,
+    true,
+  );
+  assert.equal(
+    (await login("employee@example.de")).user.completion_sound,
+    true,
+  );
+  await stop(child);
+  const restarted = await start(join(dir, "test.sqlite"));
+  child = restarted.process;
+  base = restarted.base;
+  assert.equal(
+    (await request("/account/preferences", { session: employeeSession })).data
+      .completion_sound,
+    true,
+  );
+  assert.equal(
+    (
+      await request("/account/preferences", {
+        session: employeeSession,
+        method: "PUT",
+        body: { completion_sound: false },
+      })
+    ).data.completion_sound,
+    false,
+  );
+});

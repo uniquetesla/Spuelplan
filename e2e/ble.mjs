@@ -85,7 +85,47 @@ try {
     }),
     errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (message) => {
+    if (
+      /Refused to apply inline style|Content Security Policy|style-src/.test(
+        message.text(),
+      )
+    )
+      errors.push(message.text());
+  });
   await page.addInitScript(() => {
+    window.__audioTones = 0;
+    class TestAudioContext {
+      state = "suspended";
+      currentTime = 0;
+      destination = {};
+      async resume() {
+        this.state = "running";
+      }
+      createOscillator() {
+        return {
+          type: "sine",
+          frequency: { setValueAtTime() {} },
+          connect() {},
+          disconnect() {},
+          start() {
+            window.__audioTones++;
+          },
+          stop() {},
+        };
+      }
+      createGain() {
+        return {
+          gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+          connect() {},
+          disconnect() {},
+        };
+      }
+    }
+    Object.defineProperty(window, "AudioContext", {
+      configurable: true,
+      value: TestAudioContext,
+    });
     const state = {
       frame: null,
       code: null,
@@ -222,6 +262,29 @@ try {
     .fill("lena@spuelplan.local");
   await page.getByLabel("Passwort", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Anmelden", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Übersicht", exact: true, level: 1 }),
+  ).toBeVisible();
+  await page.goto(base + "/#/settings");
+  await expect(
+    page.getByRole("heading", { name: "Einstellungen", exact: true, level: 1 }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("checkbox", { name: /Abschlusston aktivieren/ }),
+  ).not.toBeChecked();
+  await page.getByRole("button", { name: "Ton testen", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__audioTones)).toBe(3);
+  await expect(
+    page.getByRole("checkbox", { name: /Abschlusston aktivieren/ }),
+  ).not.toBeChecked();
+  await page.getByRole("checkbox", { name: /Abschlusston aktivieren/ }).check();
+  await page
+    .getByRole("button", { name: "Einstellungen speichern", exact: true })
+    .click();
+  await expect(page.locator("#sound-settings-status")).toContainText(
+    "gespeichert",
+  );
+  await page.goto(base + "/#/lists");
   await page.getByRole("link", { name: /BLE-Testliste/ }).click();
   await page
     .locator('tr[data-action="select-point"]')
@@ -318,8 +381,27 @@ try {
     page.getByRole("button", { name: "Messdaten abrufen", exact: true }),
   ).toBeEnabled();
   await page.evaluate(() =>
-    window.__ble.notify("LIVE;MEASURING;SP-BLE;4.5;12.4;1.25;2.5;50;1000"),
+    window.__ble.notify("LIVE;MEASURING;SP-BLE;4.5;12.4;0.625;2.5;0;1500"),
   );
+  await expect(
+    page.getByRole("progressbar", { name: "Spülfortschritt" }),
+  ).toHaveAttribute("value", "25");
+  assert.equal(
+    await page
+      .getByRole("progressbar", { name: "Spülfortschritt" })
+      .evaluate((e) => e.tagName),
+    "PROGRESS",
+  );
+  await page.evaluate(() =>
+    window.__ble.notify("LIVE;MEASURING;SP-BLE;4.5;12.4;1.25;2.5;0;1000"),
+  );
+  await expect(
+    page.getByRole("progressbar", { name: "Spülfortschritt" }),
+  ).toHaveAttribute("value", "50");
+  await page.screenshot({
+    path: "/tmp/spuelpilot-progress-50.png",
+    fullPage: true,
+  });
   await expect(
     page.getByRole("progressbar", { name: "Spülfortschritt" }),
   ).toHaveAttribute("aria-valuenow", "50");
@@ -401,6 +483,7 @@ try {
     .getByLabel("Trübung festgestellt?", { exact: true })
     .selectOption("false");
   await expect(page.locator(".ble-error")).toContainText("Test-Speicherfehler");
+  await expect.poll(() => page.evaluate(() => window.__audioTones)).toBe(6);
   assert.equal(
     attempts,
     1,
@@ -437,6 +520,11 @@ try {
     page.getByRole("heading", { name: "Spüllisten", exact: true, level: 1 }),
   ).toBeVisible();
   assert.equal(attempts, 3);
+  assert.equal(
+    await page.evaluate(() => window.__audioTones),
+    6,
+    "duplicate READY, manual GET and server retries must not repeat the sound",
+  );
   assert.equal(await page.evaluate(() => window.__ble.state.led), false);
   const records = await (await admin.get("/api/flushes")).json();
   const saved = records.filter((r) => r.request_id === requestId);
@@ -645,6 +733,28 @@ try {
   );
   console.log(
     "PASS: Live im Leerlauf, Fortschritt, Restzeit, Fehler und mobile Anzeige; READY ruft automatisch ab, speichert einmalig und bestätigt erst nach Servererfolg; autonome Messung nach Trennung wird korrekt wiederaufgenommen.",
+  );
+  await expect.poll(() => page.evaluate(() => window.__audioTones)).toBe(3);
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  await page.goto(base + "/#/settings");
+  await expect(
+    page.getByRole("checkbox", { name: /Abschlusston aktivieren/ }),
+  ).toBeChecked();
+  await page
+    .getByRole("checkbox", { name: /Abschlusston aktivieren/ })
+    .uncheck();
+  await page
+    .getByRole("button", { name: "Einstellungen speichern", exact: true })
+    .click();
+  await expect(page.locator("#sound-settings-status")).toContainText(
+    "gespeichert",
+  );
+  await page.reload();
+  await expect(
+    page.getByRole("checkbox", { name: /Abschlusston aktivieren/ }),
+  ).not.toBeChecked();
+  console.log(
+    "PASS: Persönlicher Abschlusston kann getestet, gespeichert und deaktiviert werden; jeder ESP-Auftrag signalisiert genau einmal; nativer Balken zeigt echte 25/50 Prozent unter strikter CSP.",
   );
   assert.deepEqual(errors, []);
   console.log(

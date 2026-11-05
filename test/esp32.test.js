@@ -7,6 +7,7 @@ import {
   parseResult,
   parseMessage,
   MeasurementNotReady,
+  measurementProgress,
 } from "../public/esp32.js";
 const point = { id: 1, code: "SP-1024", target: 2.5 },
   runId = 7;
@@ -168,6 +169,7 @@ test("ESP32-Protokoll kodiert Aufträge und prüft ID, Zahlen und vollständige 
   assert.throws(
     () => parseResult("SP-1024;2.4;12;9", point),
     MeasurementNotReady,
+    measurementProgress,
   );
   assert.deepEqual(parseMessage("STATUS;ACK_OK"), { type: "ack" });
   assert.deepEqual(parseMessage("NONE"), { type: "none" });
@@ -536,4 +538,20 @@ test("Auch ein numerisch plausibel abgeschnittenes Ergebnis wird vor Speicherung
     false,
   );
   f.client.disconnect();
+});
+
+test("Fortschritt folgt der Ist-/Sollmenge statt einem veralteten Firmware-Prozentfeld", () => {
+  for (const [volume, expected] of [
+    [0, 0],
+    [0.625, 25],
+    [1.25, 50],
+    [2.5, 100],
+    [3, 100],
+  ])
+    assert.equal(
+      measurementProgress({ volume, target: 2.5, percent: 0 }),
+      expected,
+    );
+  assert.equal(measurementProgress({ volume: 1, target: 0 }), null);
+  assert.equal(measurementProgress({ volume: NaN, target: 2 }), null);
 });

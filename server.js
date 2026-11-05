@@ -123,6 +123,31 @@ for (const table of ["flushes", "list_runs"]) {
 db.exec(
   "CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
 );
+// Keep the note submitted with a measurement immutable for idempotent ESP retries.
+for (const [name, definition] of [
+  ["submitted_content", "TEXT"],
+  ["revision", "INTEGER NOT NULL DEFAULT 1"],
+]) {
+  if (
+    !db
+      .prepare("PRAGMA table_info(internal_notes)")
+      .all()
+      .some((c) => c.name === name)
+  )
+    db.exec(`ALTER TABLE internal_notes ADD COLUMN ${name} ${definition}`);
+}
+if (
+  !db
+    .prepare("PRAGMA table_info(users)")
+    .all()
+    .some((c) => c.name === "completion_sound")
+)
+  db.exec(
+    "ALTER TABLE users ADD COLUMN completion_sound INTEGER NOT NULL DEFAULT 0",
+  );
+db.exec(
+  `CREATE TABLE IF NOT EXISTS internal_note_additions(id INTEGER PRIMARY KEY,flush_id INTEGER NOT NULL REFERENCES flushes(id),user_id INTEGER NOT NULL REFERENCES users(id),request_id TEXT NOT NULL UNIQUE,content TEXT NOT NULL,created_at TEXT NOT NULL);`,
+);
 const setupTokenPath = resolve(dirname(dbPath), "setup-token");
 if (!oneUserExists() && !existsSync(setupTokenPath))
   writeFileSync(setupTokenPath, randomBytes(32).toString("hex"), {
@@ -184,7 +209,7 @@ app.use("/api", (req, res, next) => {
     ?.slice(11);
   if (cookie) {
     const session = one(
-      "SELECT s.*,u.name,u.email,u.role,u.must_change_password FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1",
+      "SELECT s.*,u.name,u.email,u.role,u.must_change_password,u.completion_sound FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1",
       digest(cookie),
       Date.now(),
     );
@@ -215,6 +240,7 @@ const publicUser = (s) => ({
   email: s.email,
   role: s.role,
   must_change_password: !!s.must_change_password,
+  completion_sound: !!s.completion_sound,
 });
 const openSession = (res, u) => {
   const token = randomBytes(32).toString("hex"),
@@ -623,6 +649,28 @@ app.use("/api", (req, res, next) => {
     });
   next();
 });
+app.get("/api/account/preferences", (req, res) =>
+  res.json({
+    completion_sound: !!one(
+      "SELECT completion_sound FROM users WHERE id=?",
+      req.session.user_id,
+    ).completion_sound,
+  }),
+);
+app.put("/api/account/preferences", (req, res) => {
+  if (typeof req.body.completion_sound !== "boolean")
+    return fail(
+      res,
+      400,
+      "Bitte einen gültigen Wert für den Abschlusston wählen.",
+    );
+  run(
+    "UPDATE users SET completion_sound=? WHERE id=?",
+    req.body.completion_sound ? 1 : 0,
+    req.session.user_id,
+  );
+  res.json({ completion_sound: req.body.completion_sound });
+});
 app.post("/api/users/:id/reset-password", admin, (req, res) => {
   const id = Number(req.params.id),
     u = one("SELECT * FROM users WHERE id=?", id);
@@ -952,12 +1000,97 @@ app.get("/api/internal-notes", internalRole, (req, res) => {
       : " AND (f.user_id=? OR EXISTS(SELECT 1 FROM assignments a WHERE a.list_id=r.list_id AND a.user_id=?))";
   res.json(
     all(
-      `SELECT n.id,n.content,n.acknowledged_at,f.point_id,f.code_snapshot code,f.address_snapshot address,f.employee_snapshot employee,f.flushed_at,r.list_id,r.number run_number,r.name_snapshot list_name FROM internal_notes n JOIN flushes f ON f.id=n.flush_id JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE f.deleted_at IS NULL AND r.deleted_at IS NULL AND l.deleted_at IS NULL AND n.acknowledged_at IS NULL${scope} ORDER BY f.flushed_at DESC,n.id DESC`,
+      `SELECT n.id,n.content,n.revision,n.acknowledged_at,f.point_id,f.code_snapshot code,f.address_snapshot address,f.employee_snapshot employee,f.flushed_at,r.list_id,r.number run_number,r.name_snapshot list_name FROM internal_notes n JOIN flushes f ON f.id=n.flush_id JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE f.deleted_at IS NULL AND r.deleted_at IS NULL AND l.deleted_at IS NULL AND n.acknowledged_at IS NULL${scope} ORDER BY f.flushed_at DESC,n.id DESC`,
       ...(req.session.role === "admin"
         ? []
         : [req.session.user_id, req.session.user_id]),
     ),
   );
+});
+const internalFlush = (session, id) =>
+  one(
+    `SELECT f.id,f.point_id,f.code_snapshot code,f.address_snapshot address,f.flushed_at,r.number run_number,r.name_snapshot list_name FROM flushes f JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE f.id=? AND f.deleted_at IS NULL AND r.deleted_at IS NULL AND l.deleted_at IS NULL ${session.role === "admin" ? "" : "AND (f.user_id=? OR EXISTS(SELECT 1 FROM assignments a WHERE a.list_id=r.list_id AND a.user_id=?))"}`,
+    Number(id),
+    ...(session.role === "admin" ? [] : [session.user_id, session.user_id]),
+  );
+app.get("/api/my-flushes", internalRole, (req, res) => {
+  res.json(
+    all(
+      "SELECT f.*,r.list_id,r.number run_number,r.status run_status,r.published_at run_published_at,r.name_snapshot list_name,f.code_snapshot code,f.address_snapshot address,f.target_snapshot target,f.employee_snapshot employee FROM flushes f JOIN list_runs r ON r.id=f.run_id JOIN lists l ON l.id=r.list_id WHERE f.user_id=? AND f.deleted_at IS NULL AND r.deleted_at IS NULL AND l.deleted_at IS NULL ORDER BY f.flushed_at DESC,f.id DESC",
+      req.session.user_id,
+    ),
+  );
+});
+app.get("/api/flushes/:id/internal-notes", internalRole, (req, res) => {
+  const f = internalFlush(req.session, req.params.id);
+  if (!f)
+    return fail(res, 404, "Messung nicht gefunden oder nicht freigegeben.");
+  res.json({
+    ...f,
+    content:
+      one("SELECT content FROM internal_notes WHERE flush_id=?", f.id)
+        ?.content || "",
+  });
+});
+app.post("/api/flushes/:id/internal-notes", internalRole, (req, res) => {
+  const f = internalFlush(req.session, req.params.id);
+  if (!f)
+    return fail(res, 404, "Messung nicht gefunden oder nicht freigegeben.");
+  const b = req.body;
+  if (
+    typeof b.content !== "string" ||
+    !b.content.trim() ||
+    b.content.length > 2000 ||
+    typeof b.request_id !== "string" ||
+    !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(b.request_id)
+  )
+    return fail(
+      res,
+      400,
+      "Bitte eine interne Bemerkung mit höchstens 2.000 Zeichen eingeben.",
+    );
+  const content = b.content.trim(),
+    old = one(
+      "SELECT * FROM internal_note_additions WHERE request_id=?",
+      b.request_id,
+    );
+  if (old) {
+    if (
+      old.flush_id !== f.id ||
+      old.user_id !== req.session.user_id ||
+      old.content !== content
+    )
+      return fail(
+        res,
+        409,
+        "Die Übertragungs-ID gehört zu einer anderen Bemerkung.",
+      );
+    return res.json({ ok: true });
+  }
+  transaction(() => {
+    const existing = one("SELECT * FROM internal_notes WHERE flush_id=?", f.id);
+    if (existing)
+      run(
+        "UPDATE internal_notes SET submitted_content=coalesce(submitted_content,content),content=?,acknowledged_at=NULL,acknowledged_by=NULL,revision=revision+1 WHERE id=?",
+        existing.content ? existing.content + "\n\n" + content : content,
+        existing.id,
+      );
+    else
+      run(
+        "INSERT INTO internal_notes(flush_id,content,submitted_content) VALUES(?,?,'')",
+        f.id,
+        content,
+      );
+    run(
+      "INSERT INTO internal_note_additions(flush_id,user_id,request_id,content,created_at) VALUES(?,?,?,?,?)",
+      f.id,
+      req.session.user_id,
+      b.request_id,
+      content,
+      new Date().toISOString(),
+    );
+  });
+  res.status(201).json({ ok: true });
 });
 app.post("/api/internal-notes/acknowledge", internalRole, (req, res) => {
   const ids = req.body.ids;
@@ -974,6 +1107,22 @@ app.post("/api/internal-notes/acknowledge", internalRole, (req, res) => {
       403,
       "Mindestens eine Bemerkung ist dir nicht zugänglich.",
     );
+  for (const id of ids) {
+    const revision = one(
+      "SELECT revision FROM internal_notes WHERE id=?",
+      id,
+    ).revision;
+    const supplied = req.body.revisions?.[id];
+    if (
+      (supplied !== undefined && supplied !== revision) ||
+      (revision > 1 && supplied === undefined)
+    )
+      return fail(
+        res,
+        409,
+        "Die Bemerkung wurde ergänzt. Bitte die Hinweise neu laden und erneut prüfen.",
+      );
+  }
   transaction(() => {
     for (const id of new Set(ids))
       run(
@@ -1060,8 +1209,10 @@ app.post("/api/points/:id/flushes", (req, res) => {
         cached.user_id !== req.session.user_id ||
         cached.point_id !== Number(req.params.id) ||
         cached.source !== source ||
-        (one("SELECT content FROM internal_notes WHERE flush_id=?", cached.id)
-          ?.content ?? "") !== note ||
+        (one(
+          "SELECT coalesce(submitted_content,content) content FROM internal_notes WHERE flush_id=?",
+          cached.id,
+        )?.content ?? "") !== note ||
         cached.volume !== b.volume ||
         cached.temperature_before !== b.temperature_before ||
         cached.temperature_after !== b.temperature_after ||
