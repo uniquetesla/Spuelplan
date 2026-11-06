@@ -485,7 +485,6 @@ try {
   await expect(page.getByLabel("Neues Passwort", { exact: true })).toHaveValue(
     "",
   );
-  await click("Menü öffnen");
   await logout();
   console.log(
     "PASS: Betrachter sehen keinen Sensormenüpunkt, auch nicht per Direktlink; eigener Passwortwechsel funktioniert.",
