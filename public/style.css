@@ -4085,7 +4085,10 @@ progress.live-progress::-moz-progress-bar {
   tbody tr:hover {
     background: #ffffff04;
   }
-  .point-selectable:not(.point-complete):not(.point-working):not(.point-issue):is(:hover, :focus-visible) > td {
+  .point-selectable:not(.point-complete):not(.point-working):not(
+      .point-issue
+    ):is(:hover, :focus-visible)
+    > td {
     background-color: #26344d;
   }
 
@@ -4781,6 +4784,112 @@ progress.live-progress::-moz-progress-bar {
     .faucet-auth *:after {
       animation: none !important;
       transition: none !important;
+    }
+  }
+}
+
+/* Keep navigation compact; account actions live in the header. */
+@media screen {
+  .nav .count:not(.issue-count) {
+    color: #d2c7ff;
+    background: #8c75e325;
+    border-color: #bb9ef540;
+  }
+  .sidebar {
+    overflow: visible;
+  }
+  .top-account {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .top-user-name {
+    color: #e1e8f8;
+    font-size: 12px;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .top-account .logout {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    border: 1px solid #a695ff29;
+    background: #8c75e315;
+    color: #c9d5ef;
+    cursor: pointer;
+  }
+  .top-account .logout:hover {
+    background: #8c75e330;
+    color: white;
+  }
+  .top-account .logout:focus-visible {
+    outline: 2px solid #b6a4ff;
+    outline-offset: 3px;
+  }
+  @media (max-height: 740px) {
+    .sidebar {
+      padding-top: 18px;
+      padding-bottom: 18px;
+    }
+    .sidebar .nav-label {
+      margin-top: 22px;
+      margin-bottom: 12px;
+    }
+    .sidebar .nav {
+      gap: 4px;
+    }
+    .sidebar .nav a {
+      padding-top: 9px;
+      padding-bottom: 9px;
+    }
+  }
+  @media (max-height: 540px) {
+    .sidebar {
+      position: absolute;
+      bottom: auto;
+      min-height: calc(100dvh - 36px);
+    }
+  }
+  @media (max-width: 1100px) {
+    .top-right .top-date,
+    .top-right .system {
+      display: none;
+    }
+  }
+  @media (max-width: 620px) {
+    .top-right {
+      display: flex;
+      margin-left: auto;
+    }
+    .top-account {
+      gap: 6px;
+    }
+    .top-account .avatar {
+      display: none;
+    }
+    .top-user-name {
+      max-width: 85px;
+      font-size: 11px;
+    }
+    .top-account .logout {
+      width: 36px;
+      height: 36px;
+    }
+    .breadcrumbs {
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .breadcrumbs strong {
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
   }
 }
