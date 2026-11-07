@@ -200,8 +200,8 @@ app.use("/api", (req, res, next) => {
   req.body ??= {};
   next();
 });
-app.use("/api", (req, res, next) => {
-  res.set("Cache-Control", "no-store");
+app.use((req, res, next) => {
+  res.set("Cache-Control", "private, no-store");
   const cookie = req.headers.cookie
     ?.split(";")
     .map((x) => x.trim())
@@ -1615,7 +1615,37 @@ app.put("/api/users/:id", admin, (req, res) => {
   res.json({ ok: true });
 });
 app.use("/api", (req, res) => fail(res, 404, "Endpunkt nicht gefunden."));
-app.use(express.static(resolve(root, "public")));
+// Explicit asset allowlist: never expose project files, databases, backups or maps.
+const publicAssets = new Set([
+  "/",
+  "/index.html",
+  "/entry.js",
+  "/login.js",
+  "/style.css",
+  "/favicon.svg",
+]);
+const privateAssets = new Set([
+  "/app.js",
+  "/esp32.js",
+  "/flow-recorder.js",
+  "/flow-chart.js",
+  "/completion-sound.js",
+]);
+app.use((req, res, next) => {
+  if (!["GET", "HEAD"].includes(req.method)) return res.sendStatus(404);
+  if (privateAssets.has(req.path)) return requireAuth(req, res, next);
+  if (publicAssets.has(req.path)) return next();
+  return res.sendStatus(404);
+});
+app.use(
+  express.static(resolve(root, "public"), {
+    dotfiles: "deny",
+    etag: false,
+    lastModified: false,
+    cacheControl: false,
+    redirect: false,
+  }),
+);
 app.use((err, req, res, next) => {
   if (
     err.code?.startsWith("SQLITE_CONSTRAINT") ||

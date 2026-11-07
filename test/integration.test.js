@@ -124,6 +124,81 @@ test("Geschützte Ersteinrichtung und keine öffentliche Registrierung", async (
   assert.equal((await request("/setup", { body: user })).status, 409);
   admin = await login(user.email);
 });
+test("Anonyme Zugriffe erhalten keine Arbeitsdaten oder Anwendungsmodule", async () => {
+  for (const path of [
+    "/lists",
+    "/users",
+    "/flushes",
+    "/report-runs",
+    "/internal-notes",
+    "/my-flushes",
+    "/flow-measurements",
+    "/statistics/settings",
+    "/me",
+    "/unknown",
+  ]) {
+    assert.equal((await request(path)).status, 401, path);
+  }
+  for (const path of [
+    "/app.js",
+    "/esp32.js",
+    "/flow-recorder.js",
+    "/flow-chart.js",
+    "/completion-sound.js",
+  ]) {
+    for (const method of ["GET", "HEAD"]) {
+      const response = await fetch(base + path, { method });
+      assert.equal(response.status, 401, path);
+      assert.match(response.headers.get("cache-control"), /no-store/);
+    }
+    const invalid = await fetch(base + path, {
+      headers: { Cookie: "sp_session=invalid" },
+    });
+    assert.equal(invalid.status, 401);
+    const allowed = await fetch(base + path, {
+      headers: { Cookie: admin.cookie },
+    });
+    assert.equal(allowed.status, 200, path);
+    assert.match(allowed.headers.get("cache-control"), /private.*no-store/);
+  }
+  for (const path of [
+    "/server.js",
+    "/flow-routes.js",
+    "/package.json",
+    "/.env",
+    "/.git/config",
+    "/data/test.sqlite",
+    "/app.js.map",
+    "/backup.sqlite",
+    "/%61pp.js",
+  ]) {
+    assert.equal((await fetch(base + path)).status, 404, path);
+  }
+  for (const path of [
+    "/",
+    "/entry.js",
+    "/login.js",
+    "/style.css",
+    "/favicon.svg",
+  ]) {
+    const response = await fetch(base + path);
+    assert.equal(response.status, 200, path);
+    assert.match(response.headers.get("cache-control"), /no-store/);
+  }
+  const loginSource = await (await fetch(base + "/login.js")).text();
+  assert.ok(!loginSource.includes("Esp32Client"));
+  assert.ok(!loginSource.includes("/lists"));
+  const isolated = await login("admin@example.de");
+  assert.equal(
+    (await request("/logout", { session: isolated, body: {} })).status,
+    200,
+  );
+  assert.equal(
+    (await fetch(base + "/app.js", { headers: { Cookie: isolated.cookie } }))
+      .status,
+    401,
+  );
+});
 test("Sitzung, CSRF, Herkunft und robots-Schutz", async () => {
   assert.equal((await request("/lists")).status, 401);
   assert.equal(
