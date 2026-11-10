@@ -637,6 +637,48 @@ try {
   await expect(page.getByRole("link", { name: /UI-Testgebiet/ })).toHaveCount(
     0,
   );
+  await page.goto(base + "/#/users");
+  await click("Benutzer anlegen");
+  await page
+    .getByLabel("Vor- und Nachname", { exact: true })
+    .fill("Konto zum Löschen");
+  await page
+    .getByLabel("E-Mail-Adresse", { exact: true })
+    .fill("ui-delete@example.de");
+  await page.getByLabel("Passwort", { exact: true }).fill(password);
+  await page
+    .locator("dialog")
+    .getByRole("button", { name: "Speichern", exact: true })
+    .click();
+  await closed();
+  const deleteRow = page
+    .locator("tbody tr")
+    .filter({ hasText: "ui-delete@example.de" });
+  await expect(deleteRow).toHaveCount(1);
+  await deleteRow
+    .getByRole("button", { name: "Konto löschen", exact: true })
+    .click();
+  await click("Abbrechen");
+  await closed();
+  await expect(deleteRow).toHaveCount(1);
+  await deleteRow
+    .getByRole("button", { name: "Konto löschen", exact: true })
+    .click();
+  await page
+    .getByLabel("Zur Bestätigung die E-Mail-Adresse eingeben", { exact: true })
+    .fill("ui-delete@example.de");
+  await click("Konto endgültig löschen");
+  await closed();
+  await expect(deleteRow).toHaveCount(0);
+  await expect(
+    page
+      .locator("tbody tr")
+      .filter({ hasText: "Dein Konto" })
+      .getByRole("button", { name: "Konto löschen", exact: true }),
+  ).toHaveCount(0);
+  console.log(
+    "PASS: Kontolöschung ist sichtbar, abbrechbar und nur mit Bestätigung möglich; eigenes Konto bleibt geschützt.",
+  );
   assert.deepEqual(errors, []);
   console.log(
     "PASS: Mobile Navigation, ESP32-Spezifikation und ausdrücklich bestätigte Admin-Löschung; keine Browserfehler.",

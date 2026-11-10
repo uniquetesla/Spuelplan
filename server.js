@@ -83,6 +83,8 @@ for (const [name, definition] of [
   ["must_change_password", "INTEGER NOT NULL DEFAULT 0"],
   ["temporary_expires", "INTEGER"],
   ["temporary_used", "INTEGER NOT NULL DEFAULT 0"],
+  ["deleted_at", "TEXT"],
+  ["deleted_by", "INTEGER REFERENCES users(id)"],
 ]) {
   if (
     !db
@@ -673,7 +675,7 @@ app.put("/api/account/preferences", (req, res) => {
 });
 app.post("/api/users/:id/reset-password", admin, (req, res) => {
   const id = Number(req.params.id),
-    u = one("SELECT * FROM users WHERE id=?", id);
+    u = one("SELECT * FROM users WHERE id=? AND deleted_at IS NULL", id);
   if (!u) return fail(res, 404, "Benutzer nicht gefunden.");
   if (id === req.session.user_id)
     return fail(res, 400, "Ändere dein eigenes Passwort unter Mein Passwort.");
@@ -1557,7 +1559,7 @@ app.put("/api/points/:id", admin, (req, res) => {
 app.get("/api/users", admin, (req, res) =>
   res.json(
     all(
-      "SELECT id,name,email,role,active,must_change_password FROM users ORDER BY name",
+      "SELECT id,name,email,role,active,must_change_password FROM users WHERE deleted_at IS NULL ORDER BY name",
     ),
   ),
 );
@@ -1578,6 +1580,45 @@ app.post("/api/users", admin, (req, res) => {
   );
   res.status(201).json({ id: Number(r.lastInsertRowid) });
 });
+// Retain an inaccessible historical reference so measurements and audit actors survive.
+app.delete("/api/users/:id", admin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id < 1)
+    return fail(res, 400, "Ungültiges Benutzerkonto.");
+  const account = one(
+    "SELECT * FROM users WHERE id=? AND deleted_at IS NULL",
+    id,
+  );
+  if (!account) return fail(res, 404, "Benutzer nicht gefunden.");
+  if (id === req.session.user_id)
+    return fail(
+      res,
+      400,
+      "Das eigene Administrationskonto kann nicht gelöscht werden.",
+    );
+  if (
+    typeof req.body.confirm_email !== "string" ||
+    req.body.confirm_email.trim().toLowerCase() !== account.email
+  )
+    return fail(
+      res,
+      400,
+      "Gib zur Bestätigung die E-Mail-Adresse des Benutzerkontos ein.",
+    );
+  transaction(() => {
+    run("DELETE FROM sessions WHERE user_id=?", id);
+    run("DELETE FROM assignments WHERE user_id=?", id);
+    run(
+      "UPDATE users SET email=?,password=?,active=0,must_change_password=0,temporary_expires=NULL,temporary_used=1,completion_sound=0,deleted_at=?,deleted_by=? WHERE id=?",
+      `deleted-${id}-${randomBytes(12).toString("hex")}@deleted.invalid`,
+      hash(randomBytes(32).toString("hex")),
+      new Date().toISOString(),
+      req.session.user_id,
+      id,
+    );
+  });
+  res.json({ ok: true });
+});
 app.put("/api/users/:id", admin, (req, res) => {
   const b = req.body,
     id = Number(req.params.id);
@@ -1593,7 +1634,10 @@ app.put("/api/users/:id", admin, (req, res) => {
       400,
       "Verwende Einmalpasswort erstellen, um ein Benutzerpasswort zurückzusetzen.",
     );
-  const existing = one("SELECT * FROM users WHERE id=?", id);
+  const existing = one(
+    "SELECT * FROM users WHERE id=? AND deleted_at IS NULL",
+    id,
+  );
   if (!existing) return fail(res, 404, "Benutzer nicht gefunden.");
   if (req.session.user_id === id && (!b.active || b.role !== "admin"))
     return fail(
