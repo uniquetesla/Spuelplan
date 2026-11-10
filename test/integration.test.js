@@ -2369,3 +2369,54 @@ test("Abschlusston wird pro Konto gespeichert; Benutzer können keine fremden Ei
     false,
   );
 });
+
+test("Angefangene Listen stehen vor freigegebenen und nicht freigegebenen Listen", async () => {
+  const session = await login("admin@example.de");
+  const ids = [];
+  for (const name of [
+    "Sortierung begonnen",
+    "Sortierung freigegeben",
+    "Sortierung Entwurf",
+  ]) {
+    const created = await request("/lists", { session, body: { name } });
+    assert.equal(created.status, 201);
+    ids.push(created.data.id);
+    for (let i = 0; i < 2; i++) {
+      const point = await request("/points", {
+        session,
+        body: {
+          list_id: created.data.id,
+          code: `SORT-${created.data.id}-${i}`,
+          address: "Heppenheim",
+          target: 2.5,
+        },
+      });
+      assert.equal(point.status, 201);
+    }
+  }
+  for (const id of ids.slice(0, 2))
+    assert.equal(
+      (
+        await request(`/lists/${id}/assignments`, {
+          session,
+          method: "PUT",
+          body: { user_ids: [session.user.id] },
+        })
+      ).status,
+      200,
+    );
+  const points = await request(`/lists/${ids[0]}/points`, { session });
+  assert.equal(
+    (
+      await request(`/points/${points.data[0].id}/flushes`, {
+        session,
+        body: values,
+      })
+    ).status,
+    201,
+  );
+  const ordered = (await lists(session)).data
+    .filter((l) => ids.includes(l.id))
+    .map((l) => l.id);
+  assert.deepEqual(ordered, ids);
+});

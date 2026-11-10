@@ -774,13 +774,16 @@ app.get("/api/lists", (req, res) => {
       (a, b) =>
         b.published_at.localeCompare(a.published_at) || b.run_id - a.run_id,
     );
-  if (req.session.role === "admin")
-    result.sort(
-      (a, b) =>
-        ({ review: 0, active: 1, published: 2, deleted: 3 })[a.status] -
-          { review: 0, active: 1, published: 2, deleted: 3 }[b.status] ||
-        b.id - a.id,
-    );
+  if (req.session.role !== "viewer") {
+    const priority = (list) => {
+      if (list.status === "active" && list.completed_count > 0) return 0;
+      if (list.status === "active" && list.assignees.length > 0) return 1;
+      return (
+        { review: 2, active: 3, published: 4, deleted: 5 }[list.status] ?? 6
+      );
+    };
+    result.sort((a, b) => priority(a) - priority(b) || b.id - a.id);
+  }
   res.json(result);
 });
 app.get("/api/lists/:id/points", (req, res) => {
