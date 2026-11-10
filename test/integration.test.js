@@ -2420,3 +2420,169 @@ test("Angefangene Listen stehen vor freigegebenen und nicht freigegebenen Listen
     .map((l) => l.id);
   assert.deepEqual(ordered, ids);
 });
+
+test("Admin löscht Kontozugang bestätigt und dauerhaft; Nachweise bleiben erhalten", async () => {
+  const session = await login("admin@example.de");
+  const email = "delete-account@example.de";
+  const created = await request("/users", {
+    session,
+    body: {
+      name: "Historischer Mitarbeiter",
+      email,
+      password,
+      role: "employee",
+    },
+  });
+  assert.equal(created.status, 201);
+  const id = created.data.id;
+  const old = await login(email);
+  const l = await request("/lists", {
+    session,
+    body: { name: "Kontolöschung Historie" },
+  });
+  const point = await request("/points", {
+    session,
+    body: {
+      list_id: l.data.id,
+      code: "DEL-ACCOUNT-POINT",
+      address: "Heppenheim",
+      target: 2.5,
+    },
+  });
+  await request(`/lists/${l.data.id}/assignments`, {
+    session,
+    method: "PUT",
+    body: { user_ids: [id] },
+  });
+  const measurement = await request(`/points/${point.data.id}/flushes`, {
+    session: old,
+    body: values,
+  });
+  assert.equal(measurement.status, 201);
+  const path = `/users/${id}`;
+  assert.equal(
+    (await request(path, { method: "DELETE", body: { confirm_email: email } }))
+      .status,
+    401,
+  );
+  assert.equal(
+    (
+      await request(path, {
+        session: old,
+        method: "DELETE",
+        body: { confirm_email: email },
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request(path, {
+        session,
+        method: "DELETE",
+        csrf: false,
+        body: { confirm_email: email },
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (await request(path, { session, method: "DELETE", body: {} })).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(path, {
+        session,
+        method: "DELETE",
+        body: { confirm_email: "wrong@example.de" },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(`/users/${session.user.id}`, {
+        session,
+        method: "DELETE",
+        body: { confirm_email: "admin@example.de" },
+      })
+    ).status,
+    400,
+  );
+  assert.equal((await request("/me", { session: old })).status, 200);
+  assert.equal(
+    (
+      await request(path, {
+        session,
+        method: "DELETE",
+        body: { confirm_email: email },
+      })
+    ).status,
+    200,
+  );
+  assert.equal((await request("/me", { session: old })).status, 401);
+  assert.equal(
+    (await request("/login", { body: { email, password } })).status,
+    401,
+  );
+  assert.ok(
+    !(await request("/users", { session })).data.some((u) => u.id === id),
+  );
+  assert.equal(
+    (
+      await request(path, {
+        session,
+        method: "PUT",
+        body: {
+          name: "Restore",
+          email,
+          password: "",
+          role: "employee",
+          active: true,
+        },
+      })
+    ).status,
+    404,
+  );
+  assert.equal(
+    (await request(path + "/reset-password", { session, body: {} })).status,
+    404,
+  );
+  assert.equal(
+    (
+      await request(path, {
+        session,
+        method: "DELETE",
+        body: { confirm_email: email },
+      })
+    ).status,
+    404,
+  );
+  const history = (await records(session)).data.find(
+    (f) => f.id === measurement.data.id,
+  );
+  assert.ok(history);
+  assert.equal(history.employee_snapshot, "Historischer Mitarbeiter");
+  const db = new DatabaseSync(join(dir, "test.sqlite"));
+  try {
+    const stored = db.prepare("SELECT * FROM users WHERE id=?").get(id);
+    assert.equal(stored.active, 0);
+    assert.ok(stored.deleted_at);
+    assert.equal(stored.deleted_by, session.user.id);
+    assert.notEqual(stored.email, email);
+    assert.equal(
+      db.prepare("SELECT count(*) n FROM assignments WHERE user_id=?").get(id)
+        .n,
+      0,
+    );
+  } finally {
+    db.close();
+  }
+  const again = await request("/users", {
+    session,
+    body: { name: "Neues Konto", email, password, role: "viewer" },
+  });
+  assert.equal(again.status, 201);
+  assert.notEqual(again.data.id, id);
+});

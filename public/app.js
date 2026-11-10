@@ -510,7 +510,7 @@ function usersPage() {
         button("Benutzer anlegen", "new-user", "plus"),
       "GEMEINSAM IM EINSATZ",
     ) +
-    `<div class="notice">${icon("shield")}<span><strong>Administration</strong> verwaltet Listen, Spülpunkte und Benutzer. <strong>Administration und Mitarbeiter</strong> dokumentieren Spülungen in ihren freigegebenen Listen. <strong>Betrachter</strong> lesen und drucken Protokolle.</span></div><section class="panel"><div class="panel-head"><div><h2>Dein Team</h2><p>${users.length} Benutzerkonten</p></div></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>E-Mail-Adresse</th><th>Rolle</th><th>Status</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td><strong>${esc(u.name)}</strong>${u.id === user.id ? '<span class="sub">Dein Konto</span>' : ""}</td><td>${esc(u.email)}</td><td><span class="badge ${u.role === "admin" ? "blue" : ""}">${roleName[u.role]}</span></td><td><span class="badge ${u.active ? "green" : ""}">${u.active ? "Aktiv" : "Deaktiviert"}</span>${u.must_change_password ? '<span class="sub">Passwortwechsel erforderlich</span>' : ""}</td><td><div class="actions"><button class="table-action" data-action="edit-user" data-id="${u.id}">Bearbeiten ${icon("edit")}</button>${u.active && u.id !== user.id ? `<button class="table-action" data-action="reset-password" data-id="${u.id}">Einmalpasswort erstellen ${icon("lock")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div></section>`
+    `<div class="notice">${icon("shield")}<span><strong>Administration</strong> verwaltet Listen, Spülpunkte und Benutzer. <strong>Administration und Mitarbeiter</strong> dokumentieren Spülungen in ihren freigegebenen Listen. <strong>Betrachter</strong> lesen und drucken Protokolle.</span></div><section class="panel"><div class="panel-head"><div><h2>Dein Team</h2><p>${users.length} Benutzerkonten</p></div></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>E-Mail-Adresse</th><th>Rolle</th><th>Status</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td><strong>${esc(u.name)}</strong>${u.id === user.id ? '<span class="sub">Dein Konto</span>' : ""}</td><td>${esc(u.email)}</td><td><span class="badge ${u.role === "admin" ? "blue" : ""}">${roleName[u.role]}</span></td><td><span class="badge ${u.active ? "green" : ""}">${u.active ? "Aktiv" : "Deaktiviert"}</span>${u.must_change_password ? '<span class="sub">Passwortwechsel erforderlich</span>' : ""}</td><td><div class="actions"><button class="table-action" data-action="edit-user" data-id="${u.id}">Bearbeiten ${icon("edit")}</button>${u.active && u.id !== user.id ? `<button class="table-action" data-action="reset-password" data-id="${u.id}">Einmalpasswort erstellen ${icon("lock")}</button>` : ""}${u.id !== user.id ? `<button class="table-action delete-link" data-action="delete-user" data-id="${u.id}">Konto löschen ${icon("close")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div></section>`
   );
 }
 function currentMeasurementCards() {
@@ -1080,6 +1080,26 @@ async function assignModal(restart = false) {
           : "Listenfreigabe aktualisiert.",
       );
     },
+  );
+}
+function deleteUserModal(account) {
+  if (!account || account.id === user.id) return;
+  showModal(
+    "Benutzerkonto löschen",
+    esc(account.name) + " · " + esc(account.email),
+    `<div class="notice">${icon("info")}<span>Dieses Konto wird dauerhaft aus der Benutzerverwaltung entfernt. Alle Sitzungen und Listenfreigaben werden aufgehoben. Eine Wiederherstellung des Zugangs ist nicht möglich. Bisherige Messungen, Protokolle und historische Mitarbeiterangaben bleiben erhalten.</span></div>` +
+      field(
+        "Zur Bestätigung die E-Mail-Adresse eingeben",
+        "confirm_email",
+        "",
+        "email",
+        'required autocomplete="off"',
+      ),
+    async (data) => {
+      await send(`/users/${account.id}`, data, "DELETE");
+      toast("Benutzerkonto gelöscht. Bisherige Messungen bleiben erhalten.");
+    },
+    "Konto endgültig löschen",
   );
 }
 function userModal(u) {
@@ -1905,6 +1925,8 @@ function bindActions(root = app) {
             resetPasswordModal(
               users.find((u) => u.id === Number(b.dataset.id)),
             );
+          else if (action === "delete-user")
+            deleteUserModal(users.find((u) => u.id === Number(b.dataset.id)));
           else if (action === "new-user") userModal();
           else if (action === "edit-user")
             userModal(users.find((u) => u.id === Number(b.dataset.id)));

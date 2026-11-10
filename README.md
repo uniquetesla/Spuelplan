@@ -194,3 +194,9 @@ Durchfluss und Restzeit werden direkt aus den aktuellen ESP32-LIVE-Telegrammen a
 Bei Administration und Mitarbeitern stehen angefangene aktive Listen zuerst, danach zum Spülen freigegebene Listen, Listen zur Prüfung, noch nicht freigegebene Listen und gespeicherte Durchgänge. Innerhalb einer Gruppe bleiben neuere Listen zuerst. Übersicht und Listensuche verwenden dieselbe Reihenfolge. Betrachter behalten die Sortierung nach Freigabedatum.
 
 Der persönliche Abschlusston besteht nun aus drei kräftigeren Tönen über knapp zwei Sekunden. Die tatsächliche Lautstärke hängt zusätzlich vom Endgerät und dessen Lautstärkeeinstellung ab. Automatischer Abruf, sichere Speicherung, ACK und die persönliche Ton-Einstellung bleiben erhalten.
+
+### Benutzerkonten löschen
+
+Unter „Team & Zugänge“ können Administratoren andere Konten mit „Konto löschen“ dauerhaft aus der Benutzerverwaltung entfernen. Die E-Mail-Adresse muss zur Bestätigung eingegeben werden. Das eigene Administrationskonto kann nicht gelöscht werden. Sitzungen und Listenfreigaben werden sofort entfernt; Zugangsdaten und E-Mail-Adresse werden verworfen. Die bisherige E-Mail-Adresse kann für ein neues, getrenntes Konto verwendet werden.
+
+Historische Messungen, Protokolle und Mitarbeiterangaben bleiben erhalten. Dafür bleibt intern ein nicht mehr aktivierbarer Referenzdatensatz mit Löschdatum und ausführendem Administrator bestehen. Gelöschte Konten erscheinen nicht mehr in der Benutzerverwaltung und können weder bearbeitet noch per Einmalpasswort wiederhergestellt werden. Vorhandene Durchflussaufzeichnungen bleiben für die Administration erhalten.
