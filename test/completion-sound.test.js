@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CompletionSound } from "../public/completion-sound.js";
 function fixture() {
-  const frames = [],
+  const schedule = [],
+    peaks = [],
+    frames = [],
     memory = new Map();
   let contexts = 0;
   class Audio {
@@ -17,14 +19,24 @@ function fixture() {
         frequency: { setValueAtTime: (value) => (tone.hz = value) },
         connect() {},
         disconnect() {},
-        start: () => frames.push(tone.hz),
-        stop() {},
+        start: (at) => {
+          frames.push(tone.hz);
+          schedule.push({ start: at });
+        },
+        stop: (at) => {
+          schedule.at(-1).stop = at;
+        },
       };
       return tone;
     }
     createGain() {
       return {
-        gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+        gain: {
+          setValueAtTime() {},
+          exponentialRampToValueAtTime(value) {
+            peaks.push(value);
+          },
+        },
         connect() {},
         disconnect() {},
       };
@@ -39,6 +51,8 @@ function fixture() {
     storage,
     Audio,
     frames,
+    schedule,
+    peaks,
     contexts: () => contexts,
   };
 }
@@ -81,4 +95,13 @@ test("Blockierte Audioausgabe beeinflusst weder Speicherung noch Wiederholschutz
   assert.equal(await sound.notify(1, "request-1"), false);
   assert.match(sound.error, /Audio gesperrt/);
   assert.equal(await sound.notify(1, "request-1"), false);
+});
+
+test("Abschlusssignal dauert knapp zwei Sekunden mit kräftigeren, getrennten Tönen", async () => {
+  const f = fixture();
+  await f.sound.play(true);
+  assert.ok(f.schedule.at(-1).stop - f.schedule[0].start >= 1.9);
+  assert.ok(Math.max(...f.peaks) >= 0.28);
+  for (let i = 1; i < f.schedule.length; i++)
+    assert.ok(f.schedule[i].start >= f.schedule[i - 1].stop);
 });

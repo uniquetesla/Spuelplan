@@ -185,3 +185,10 @@ Ohne Anmeldung werden nur die Loginseite, ihr Einstiegsskript, das Login-Skript,
 Alle Antworten erhalten `Cache-Control: private, no-store`. Beim Aktualisieren auf dem Docker-Server den gesamten Ordner `public` einschließlich `entry.js` und `login.js` in das neue Image übernehmen. Cloudflare darf für diese interne Anwendung keine Cache-Regel verwenden, die diese Header übergeht. Nach der Bereitstellung vorhandene Cloudflare-Cache-Einträge löschen; bereits zuvor heruntergeladener Browsercode lässt sich nicht nachträglich zurückholen. Die Docker-Anwendung muss die Dateien selbst ausliefern: Ein vorgeschalteter Webserver darf `public` nicht separat ohne Sitzungsprüfung bereitstellen.
 
 Der Browser muss Login-Code und Gestaltung herunterladen können. Nach erfolgreicher Anmeldung sind auch geladene Arbeitsmodule und die eigenen API-Aufrufe in den Entwicklertools sichtbar. Das ist keine Zugriffskontrolle; maßgeblich sind die serverseitige Sitzung und die Berechtigungsprüfung bei jeder Anfrage. Datenbankdateien, Servercode, Passwörter und Sitzungsschlüssel werden nicht als statische Dateien ausgeliefert.
+
+
+### Geglättete Live-Anzeige
+
+Die Anzeige verwendet den Durchschnitt von höchstens fünf gültigen, maximal fünf Sekunden alten LIVE-Durchflusswerten. Die Restzeit wird aus Restmenge und diesem Durchschnitt berechnet; `-1`, Stillstand und Fehler bleiben „Nicht berechenbar“. Bei Verbindungsverlust, Datenlücken, Auftragswechsel und zurückgesetzter Menge wird der Verlauf verworfen. Sensor-Rohdaten für Durchflussdiagramme, Istmenge und finale GET-Ergebnisse bleiben unverändert. Das vorhandene BLE-Protokoll überträgt keine einzelnen Impulse; eine Glättung direkt über Impulsabstände benötigt eine entsprechende Änderung der ESP32-Firmware.
+
+Der persönliche Abschlusston besteht nun aus drei kräftigeren Tönen über knapp zwei Sekunden. Die tatsächliche Lautstärke hängt zusätzlich vom Endgerät und dessen Lautstärkeeinstellung ab. Automatischer Abruf, sichere Speicherung, ACK und die persönliche Ton-Einstellung bleiben erhalten.
