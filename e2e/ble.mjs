@@ -298,7 +298,7 @@ try {
     .click();
   await expect(
     page.getByRole("button", {
-      name: "Spülpunkt an ESP32 senden",
+      name: "Spülpunkt an SpülPilot senden",
       exact: true,
     }),
   ).toBeDisabled();
@@ -307,7 +307,7 @@ try {
     .click();
   await expect(
     page.getByRole("button", {
-      name: "Spülpunkt an ESP32 senden",
+      name: "Spülpunkt an SpülPilot senden",
       exact: true,
     }),
   ).toBeEnabled();
@@ -323,7 +323,7 @@ try {
     .getByRole("button", { name: "Bluetooth verbinden", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Spülpunkt an ESP32 senden", exact: true })
+    .getByRole("button", { name: "Spülpunkt an SpülPilot senden", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Messdaten abrufen", exact: true }),
@@ -365,7 +365,7 @@ try {
     .click();
   await expect(
     page.getByRole("button", {
-      name: "Spülpunkt an ESP32 senden",
+      name: "Spülpunkt an SpülPilot senden",
       exact: true,
     }),
   ).toBeEnabled();
@@ -381,7 +381,7 @@ try {
     false,
   );
   await page
-    .getByRole("button", { name: "Spülpunkt an ESP32 senden", exact: true })
+    .getByRole("button", { name: "Spülpunkt an SpülPilot senden", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Messdaten abrufen", exact: true }),
@@ -642,7 +642,7 @@ try {
     .getByLabel("Interne Bemerkung", { exact: false })
     .fill("Interner Sensorhinweis");
   await page
-    .getByRole("button", { name: "Spülpunkt an ESP32 senden", exact: true })
+    .getByRole("button", { name: "Spülpunkt an SpülPilot senden", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Messdaten abrufen", exact: true }),

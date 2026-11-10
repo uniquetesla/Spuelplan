@@ -51,12 +51,13 @@ export class CompletionSound {
     for (const [i, frequency] of [784, 988, 1175].entries()) {
       const tone = ctx.createOscillator(),
         gain = ctx.createGain(),
-        at = start + i * 0.14;
+        at = start + i * 0.65;
       tone.type = "sine";
       tone.frequency.setValueAtTime(frequency, at);
       gain.gain.setValueAtTime(0.0001, at);
-      gain.gain.exponentialRampToValueAtTime(0.13, at + 0.018);
-      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.13);
+      gain.gain.exponentialRampToValueAtTime(0.28, at + 0.035);
+      gain.gain.setValueAtTime(0.28, at + 0.38);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.58);
       tone.connect(gain);
       gain.connect(ctx.destination);
       tone.onended = () => {
@@ -64,7 +65,7 @@ export class CompletionSound {
         gain.disconnect();
       };
       tone.start(at);
-      tone.stop(at + 0.14);
+      tone.stop(at + 0.62);
     }
     return true;
   }

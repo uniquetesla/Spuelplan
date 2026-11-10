@@ -4893,3 +4893,47 @@ progress.live-progress::-moz-progress-bar {
     }
   }
 }
+@media screen {
+  .ble-order-summary {
+    margin: 16px 0 12px;
+    padding: 18px;
+    border: 1px solid #b6a4ff50;
+    border-radius: 18px;
+    background: linear-gradient(120deg, #7160c925, #458cc318);
+  }
+  .ble-order-summary .eyebrow {
+    display: block;
+    margin-bottom: 9px;
+  }
+  .ble-order-summary > strong {
+    display: block;
+    color: #eef1ff;
+    font-size: 18px;
+  }
+  .ble-order-summary p {
+    color: #b8c8e1;
+    font-size: 12px;
+    line-height: 1.7;
+    margin: 10px 0 0;
+  }
+  .ble-order-summary.is-sent {
+    border-color: #6fdfbd55;
+    background: #3aa88b12;
+  }
+  .ble-fetch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 0;
+    font-size: 12px;
+    color: #bcb2f5;
+  }
+  .ble-fetch:disabled {
+    opacity: 0.5;
+    cursor: wait;
+  }
+  .ble-fetch svg {
+    width: 15px;
+    height: 15px;
+  }
+}
