@@ -556,43 +556,19 @@ test("Fortschritt folgt der Ist-/Sollmenge statt einem veralteten Firmware-Proze
   assert.equal(measurementProgress({ volume: NaN, target: 2 }), null);
 });
 
-test("Durchflussanzeige glättet fünf Live-Werte; Restzeit folgt dem Durchschnitt, Rohdaten bleiben erhalten", () => {
+test("Durchfluss und Restzeit werden unmittelbar vom ESP32 übernommen", () => {
   const client = fake().client;
-  const feed = (
-    flow,
-    volume = 1,
-    code = "SP-1024",
-    state = "MEASURING",
-    remaining = 99,
-  ) => {
+  for (const [flow, remaining] of [
+    [2, 2700],
+    [8, 675],
+    [0, -1],
+  ]) {
     client.receive(
-      parseMessage(
-        `LIVE;${state};${code};${flow};12;${volume};2.5;40;${remaining}`,
-      ),
+      parseMessage(`LIVE;MEASURING;SP-1024;${flow};12;1;2.5;40;${remaining}`),
     );
-    return client.live;
-  };
-  for (const flow of [2, 4, 2, 4, 3]) feed(flow);
-  assert.equal(client.live.smoothedFlow, 3);
-  assert.equal(client.live.flow, 3);
-  assert.equal(client.live.estimatedRemaining, 1800);
-  feed(7);
-  assert.equal(client.live.smoothedFlow, 4);
-  assert.equal(client.live.flow, 7);
-  assert.equal(client.live.estimatedRemaining, 1350);
-  feed(0);
-  assert.equal(client.live.smoothedFlow, 0);
-  assert.equal(client.live.estimatedRemaining, -1);
-  feed(6);
-  assert.equal(client.live.smoothedFlow, 3);
-  feed(2, 1, "SP-OTHER");
-  assert.equal(client.live.smoothedFlow, 2);
-  feed(2, 1, "SP-OTHER", "MEASURING", -1);
-  assert.equal(client.live.estimatedRemaining, -1);
-  feed(2, 2.5, "SP-OTHER", "READY", 0);
-  assert.equal(client.live.estimatedRemaining, 0);
-  client.clearLive();
-  feed(8);
-  assert.equal(client.live.smoothedFlow, 8);
+    assert.equal(client.live.flow, flow);
+    assert.equal(client.live.remaining, remaining);
+    assert.equal(client.live.smoothedFlow, undefined);
+  }
   client.clearLive();
 });

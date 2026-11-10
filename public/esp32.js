@@ -227,7 +227,6 @@ export class Esp32Client extends EventTarget {
     this.error = "";
     this.deviceStatus = null;
     this.live = null;
-    this.flowWindow = [];
     this.liveTimer = null;
     this.transport = { maxNotificationBytes: 0, invalidFrames: 0, mtu: null };
     this.generation = 0;
@@ -279,7 +278,6 @@ export class Esp32Client extends EventTarget {
     clearTimeout(this.liveTimer);
     this.liveTimer = null;
     this.live = null;
-    this.flowWindow = [];
   }
   get connected() {
     return !!(this.device?.gatt?.connected && this.command && this.result);
@@ -339,46 +337,7 @@ export class Esp32Client extends EventTarget {
   receive(message) {
     if (message.type === "live") {
       clearTimeout(this.liveTimer);
-      const now = Date.now();
-      // Smooth presentation only. Raw LIVE messages still feed the recorder;
-      // final result, volume and GET/ACK processing remain untouched.
-      if (
-        !this.live ||
-        this.live.code !== message.code ||
-        this.live.target !== message.target ||
-        message.volume < this.live.volume ||
-        message.flow === 0 ||
-        message.state === "ERROR"
-      )
-        this.flowWindow = [];
-      this.flowWindow = this.flowWindow.filter(
-        (sample) => now - sample.at < 5000,
-      );
-      this.flowWindow.push({ at: now, flow: message.flow });
-      this.flowWindow = this.flowWindow.slice(-5);
-      const smoothedFlow =
-        this.flowWindow.reduce((sum, sample) => sum + sample.flow, 0) /
-        this.flowWindow.length;
-      const estimatedRemaining =
-        message.state === "READY"
-          ? 0
-          : message.remaining === -1 ||
-              message.flow === 0 ||
-              smoothedFlow <= 0 ||
-              ["IDLE", "WAIT_FLOW", "COUNTDOWN", "ERROR"].includes(
-                message.state,
-              )
-            ? -1
-            : Math.ceil(
-                (Math.max(0, message.target - message.volume) / smoothedFlow) *
-                  3600,
-              );
-      this.live = {
-        ...message,
-        smoothedFlow,
-        estimatedRemaining,
-        receivedAt: now,
-      };
+      this.live = { ...message, receivedAt: Date.now() };
       this.deviceStatus = {
         type: "status",
         state: message.state,
