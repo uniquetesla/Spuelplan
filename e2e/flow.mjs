@@ -131,6 +131,7 @@ try {
   const click = (name) =>
     page.getByRole("button", { name, exact: true }).click();
   await login("lena@spuelplan.local");
+  await click("Menü öffnen");
   await page
     .getByRole("link", { name: "Durchflussmessung", exact: true })
     .click();

@@ -200,3 +200,7 @@ Der persönliche Abschlusston besteht nun aus drei kräftigeren Tönen über kna
 Unter „Team & Zugänge“ können Administratoren andere Konten mit „Konto löschen“ dauerhaft aus der Benutzerverwaltung entfernen. Die E-Mail-Adresse muss zur Bestätigung eingegeben werden. Das eigene Administrationskonto kann nicht gelöscht werden. Sitzungen und Listenfreigaben werden sofort entfernt; Zugangsdaten und E-Mail-Adresse werden verworfen. Die bisherige E-Mail-Adresse kann für ein neues, getrenntes Konto verwendet werden.
 
 Historische Messungen, Protokolle und Mitarbeiterangaben bleiben erhalten. Dafür bleibt intern ein nicht mehr aktivierbarer Referenzdatensatz mit Löschdatum und ausführendem Administrator bestehen. Gelöschte Konten erscheinen nicht mehr in der Benutzerverwaltung und können weder bearbeitet noch per Einmalpasswort wiederhergestellt werden. Vorhandene Durchflussaufzeichnungen bleiben für die Administration erhalten.
+
+### Kartenmenü
+
+Die Navigation öffnet sich über „Menü“ als Kartenübersicht auf Desktop und Smartphone. Die Karten werden nacheinander vom Menüknopf aus eingeblendet; die ausgewählte Karte fliegt vor dem Seitenwechsel dorthin zurück. Mit Escape oder einem Klick auf den Hintergrund lässt sich das Menü schließen. Pfeiltasten wechseln zwischen den Karten. Die Systemeinstellung „Bewegung reduzieren“ deaktiviert die Animationen. Die sichtbaren Ziele richten sich weiterhin nach der Benutzerrolle.

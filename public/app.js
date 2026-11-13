@@ -234,11 +234,79 @@ const navItems = () => [
 ];
 function layout(content, section) {
   const nav = navItems();
-  app.innerHTML = `<div class="shell"><div class="menu-backdrop" data-action="menu"></div><aside class="sidebar">${brand()}<div class="nav-label">Arbeitsbereich</div><nav class="nav" aria-label="Hauptnavigation">${nav.map(([id, label, ic]) => `<a href="#/${id}" class="${section === id ? "active" : ""}" ${section === id ? 'aria-current="page"' : ""}>${icon(ic)}${label}${id === "lists" ? `<span class="count">${lists.length}</span>` : id === "notes" && notes.length ? `<span class="count issue-count">${new Set(notes.map((n) => n.point_id)).size}</span>` : ""}</a>`).join("")}</nav></aside><main class="main"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-action="menu" aria-label="Menü öffnen">${icon("menu")}</button>Arbeitsbereich ${icon("chevron")} <strong>${nav.find((x) => x[0] === section)?.[1] || "Spüllisten"}</strong></div><div class="top-right"><span class="system"><i class="dot"></i>Interner Arbeitsbereich</span><span class="top-date">${new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span><div class="top-account"><div class="avatar">${esc(initials(user.name))}</div><strong class="top-user-name">${esc(user.name)}</strong><button class="logout" data-action="logout" title="Abmelden" aria-label="Abmelden">${icon("logout")}</button></div></div></header><div class="content">${user.role !== "viewer" && notes.length && section !== "notes" ? `<div class="internal-alert no-print">${icon("info")}<a href="#/notes">${new Set(notes.map((n) => n.point_id)).size} Spülpunkt(e) mit offenen internen Bemerkungen ansehen</a></div>` : ""}${content}<footer class="footer"><span>© ${new Date().getFullYear()} SpülPilot · Stadtwerke Heppenheim</span><span>${icon("shield")}Zugriff geschützt · ${roleName[user.role]}</span></footer></div></main></div>`;
+  app.innerHTML = `<div class="shell"><div class="menu-backdrop" data-action="menu"></div><aside class="sidebar card-menu" id="card-menu" hidden>${brand()}<div class="nav-label">Arbeitsbereich</div><nav class="nav" aria-label="Hauptnavigation">${nav.map(([id, label, ic]) => `<a href="#/${id}" class="${section === id ? "active" : ""}" ${section === id ? 'aria-current="page"' : ""}>${icon(ic)}${label}${id === "lists" ? `<span class="count">${lists.length}</span>` : id === "notes" && notes.length ? `<span class="count issue-count">${new Set(notes.map((n) => n.point_id)).size}</span>` : ""}</a>`).join("")}</nav></aside><main class="main"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu menu-trigger" data-action="menu" aria-label="Menü öffnen" aria-expanded="false" aria-controls="card-menu">${icon("menu")}<span>Menü</span></button>Arbeitsbereich ${icon("chevron")} <strong>${nav.find((x) => x[0] === section)?.[1] || "Spüllisten"}</strong></div><div class="top-right"><span class="system"><i class="dot"></i>Interner Arbeitsbereich</span><span class="top-date">${new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span><div class="top-account"><div class="avatar">${esc(initials(user.name))}</div><strong class="top-user-name">${esc(user.name)}</strong><button class="logout" data-action="logout" title="Abmelden" aria-label="Abmelden">${icon("logout")}</button></div></div></header><div class="content">${user.role !== "viewer" && notes.length && section !== "notes" ? `<div class="internal-alert no-print">${icon("info")}<a href="#/notes">${new Set(notes.map((n) => n.point_id)).size} Spülpunkt(e) mit offenen internen Bemerkungen ansehen</a></div>` : ""}${content}<footer class="footer"><span>© ${new Date().getFullYear()} SpülPilot · Stadtwerke Heppenheim</span><span>${icon("shield")}Zugriff geschützt · ${roleName[user.role]}</span></footer></div></main></div>`;
   bindActions();
+  bindCardMenu();
   updateBlePanels();
   updateMeasurementDock();
 }
+function toggleCardMenu(force, returnFocus = true) {
+  const menu = document.querySelector("#card-menu");
+  const trigger = document.querySelector(".menu-trigger");
+  if (!menu || !trigger || menu.dataset.picking) return;
+  const open = force ?? menu.hidden;
+  menu.getAnimations({subtree:true}).forEach(animation => animation.cancel());
+  menu.hidden = !open;
+  menu.classList.toggle("open", open);
+  document.querySelector(".menu-backdrop").classList.toggle("open", open);
+  document.querySelector(".shell").classList.toggle("menu-open", open);
+  trigger.setAttribute("aria-expanded", String(open));
+  // Stable accessible name keeps the same control discoverable while open.
+  if (open && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    const origin = trigger.getBoundingClientRect();
+    menu.querySelectorAll(".nav a").forEach((card, index) => {
+      const target = card.getBoundingClientRect();
+      card.animate([
+        {transform:`translate(${origin.x-target.x}px, ${origin.y-target.y}px) rotate(-18deg) scale(.2)`, opacity:0},
+        {transform:"translate(0, 0) rotate(0) scale(1)", opacity:1}
+      ], {duration:420, delay:index*40, easing:"cubic-bezier(.2,.8,.2,1)", fill:"backwards"});
+    });
+  }
+  if (open) menu.querySelector(".nav a")?.focus({preventScroll:true});
+  if (!open && returnFocus) trigger.focus({preventScroll:true});
+}
+function bindCardMenu() {
+  const menu = document.querySelector("#card-menu");
+  menu.onkeydown = event => {
+    const cards = [...menu.querySelectorAll(".nav a")];
+    const index = cards.indexOf(document.activeElement);
+    const step = {ArrowDown:2, ArrowUp:-2, ArrowRight:1, ArrowLeft:-1}[event.key];
+    if (step !== undefined) {
+      event.preventDefault();
+      cards[(Math.max(0,index)+step+cards.length)%cards.length].focus();
+    }
+  };
+  menu.querySelectorAll(".nav a").forEach(card => {
+    card.onclick = async event => {
+      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      if (menu.dataset.picking) return;
+      menu.dataset.picking = "true";
+      const destination = card.getAttribute("href");
+      menu.getAnimations({subtree:true}).forEach(animation => animation.cancel());
+      if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        const target = document.querySelector(".menu-trigger").getBoundingClientRect();
+        const rect = card.getBoundingClientRect();
+        const flight = card.animate([
+          {transform:"translate(0,0) rotate(0) scale(1)", opacity:1},
+          {transform:`translate(${target.x+target.width/2-rect.x-rect.width/2}px, ${target.y+target.height/2-rect.y-rect.height/2}px) rotate(-12deg) scale(.15)`, opacity:0}
+        ], {duration:300, easing:"cubic-bezier(.5,0,.8,.4)", fill:"forwards"});
+        try { await flight.finished; } catch {}
+      }
+      if (!menu.isConnected) return;
+      delete menu.dataset.picking;
+      toggleCardMenu(false);
+      if (location.hash !== destination) location.hash = destination;
+    };
+  });
+}
+document.addEventListener("keydown", event => {
+  const menu = document.querySelector("#card-menu");
+  if (event.key === "Escape" && menu && !menu.hidden && !menu.dataset.picking && !modal.open) {
+    event.preventDefault();
+    toggleCardMenu(false);
+  }
+});
 function heading(
   title,
   subtitle,
@@ -1885,8 +1953,7 @@ function bindActions(root = app) {
           const action = b.dataset.action,
             p = points.find((x) => x.id === Number(b.dataset.id));
           if (action === "menu") {
-            document.querySelector(".sidebar").classList.toggle("open");
-            document.querySelector(".menu-backdrop").classList.toggle("open");
+            toggleCardMenu();
           } else if (action === "logout") {
             await send("/logout", {});
             ++loadVersion;
