@@ -168,6 +168,36 @@ try {
     fullPage: true,
   });
   await login("admin@spuelplan.local");
+  await expect(page.locator("#card-menu")).toBeHidden();
+  await click("Menü öffnen");
+  await expect(page.locator(".menu-trigger")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#card-menu .nav a")).toHaveCount(9);
+  await page.waitForTimeout(800);
+  await page.screenshot({path:"/tmp/spuelpilot-card-menu-desktop.png", fullPage:true});
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#card-menu")).toBeHidden();
+  await expect(page.locator(".menu-trigger")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#card-menu .nav a").first()).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("#card-menu .nav a").nth(1)).toBeFocused();
+  await page.keyboard.press("Escape");
+  await click("Menü öffnen");
+  await page.locator("#card-menu .nav a").filter({hasText:"Spüllisten"}).click();
+  await expect(heading("Spüllisten")).toBeVisible();
+  await expect(page.locator("#card-menu")).toBeHidden();
+  await page.setViewportSize({width:390,height:844});
+  await page.emulateMedia({reducedMotion:"reduce"});
+  await click("Menü öffnen");
+  await expect(page.locator("#card-menu")).toBeVisible();
+  assert.equal(await page.locator("#card-menu").evaluate(el=>el.getAnimations({subtree:true}).length),0);
+  await page.screenshot({path:"/tmp/spuelpilot-card-menu-mobile.png", fullPage:true});
+  await page.keyboard.press("Escape");
+  await page.emulateMedia({reducedMotion:"no-preference"});
+  await page.setViewportSize({width:1440,height:1050});
+  await page.goto(base + "/#/overview");
+  console.log("PASS: Kartenmenü auf Desktop und Mobilgerät, Auswahl, Escape, Tastaturfokus und reduzierte Bewegung.");
+
   await expect(page.locator(".demo-notice")).toHaveCount(0);
   await page.screenshot({
     path: "/tmp/spuelpilot-glass-overview.png",
@@ -349,6 +379,7 @@ try {
   );
   await login("admin@spuelplan.local");
   await openList();
+  await click("Menü öffnen");
   await page.getByRole("link", { name: /Interne Hinweise/ }).click();
   await expect(heading("Interne Hinweise")).toBeVisible();
   await expect(page.locator(".issue-card")).toContainText(internalNote);
@@ -491,6 +522,7 @@ try {
   );
   await page.setViewportSize({ width: 1440, height: 1050 });
   await login("admin@spuelplan.local");
+  await click("Menü öffnen");
   await page.getByRole("link", { name: "Team & Zugänge", exact: true }).click();
   await expect(heading("Team & Zugänge")).toBeVisible();
   await page
@@ -531,6 +563,7 @@ try {
     "PASS: Admin erzeugt Einmalpasswort; Pflichtwechsel sperrt Navigation und Arbeitsdaten; Einmalpasswort kann nicht wiederverwendet werden.",
   );
   await login("admin@spuelplan.local");
+  await click("Menü öffnen");
   await page
     .getByRole("link", { name: "Geräte & Sensoren", exact: true })
     .click();
@@ -538,6 +571,7 @@ try {
   const flow = await page.locator(".device-flow").textContent();
   assert.match(flow, /mindestens 1 m³\/h/);
   assert.match(flow, /5 Sekunden/);
+  await click("Menü öffnen");
   await page.getByRole("link", { name: "Team & Zugänge", exact: true }).click();
   await click("Einstellungen");
   await expect(

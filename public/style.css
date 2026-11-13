@@ -4937,3 +4937,52 @@ progress.live-progress::-moz-progress-bar {
     height: 15px;
   }
 }
+
+/* Card dealing navigation, shared by desktop and mobile. */
+@media screen {
+  .shell .main { margin-left: 0; padding: 0 20px; width: 100%; }
+  .shell .topbar { margin-left: 0; margin-right: 0; }
+  .shell .menu-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 11px 14px; border-radius: 14px; background: linear-gradient(120deg,#8067cf40,#438eba25); border: 1px solid #b6a4ff45; color: #eee9ff; min-height: 42px; font-size: 12px; }
+  .menu-trigger span { font-weight: 650; }
+  .menu-trigger[aria-expanded="true"] { background: #8872d957; box-shadow: 0 0 24px #8c75e328; }
+  .menu-trigger:focus-visible, .card-menu .nav a:focus-visible { outline: 2px solid #c3b1ff; outline-offset: 4px; }
+  .shell .card-menu { position: fixed; inset: 104px auto auto 24px; width: 360px; min-height: 0; padding: 22px; border-radius: 24px; transform: none; z-index: 44; background: linear-gradient(145deg,#171e34f5,#152137f5); overflow: visible; }
+  .shell .card-menu[hidden] { display: none; }
+  .card-menu .brand { font-size: 21px; margin-bottom: 16px; }
+  .card-menu .brand-icon { height: 35px; width: 35px; }
+  .card-menu .nav-label { margin: 8px 0 14px; }
+  .card-menu .nav { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+  .card-menu .nav a { position: relative; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 10px; min-height: 74px; padding: 13px; font-size: 11px; line-height: 1.4; border-radius: 15px; background: linear-gradient(140deg,#8b7cc219,#79c1d30c); border: 1px solid #afa8df25; box-shadow: 0 5px 12px #00000020,inset 0 1px 0 #ffffff08; transform-origin: center; }
+  .card-menu .nav a:hover { background: linear-gradient(140deg,#8b7cc238,#79c1d31a); border-color: #b6a4ff60; color: white; }
+  .card-menu .nav a.active { background: linear-gradient(140deg,#8470d64d,#438eba30); border-color: #b6a4ff60; }
+  .card-menu .nav .count { position: absolute; top: 12px; right: 12px; margin: 0; }
+  .shell .menu-backdrop.open { display: block; position: fixed; inset: 0; z-index: 42; background: #04081480; backdrop-filter: blur(5px); }
+  .shell.menu-open .topbar { z-index: 43; }
+  @media (max-width:620px) {
+    .shell .main { padding: 0 10px; }
+    .shell .card-menu { top: 86px; left: 12px; width: min(360px,calc(100vw - 24px)); padding: 18px; }
+    .shell .menu-trigger { padding: 9px; gap: 6px; }
+    .shell .menu-trigger svg { width: 18px; }
+    .breadcrumbs { gap: 5px; font-size: 10px; }
+  }
+  @media (max-height:680px) {
+    .shell .card-menu { top: 86px; padding: 14px; }
+    .card-menu .brand, .card-menu .nav-label { display: none; }
+    .card-menu .nav { gap: 7px; }
+    .card-menu .nav a { min-height: 56px; flex-direction: row; align-items: center; padding: 10px; }
+    .card-menu .nav .count { position: static; margin-left: auto; }
+  }
+  @media (max-height:420px) {
+    .shell .card-menu { position: absolute; top: 86px; }
+  }
+}
+@media screen {
+  .shell .topbar { gap: 12px; }
+  .shell .breadcrumbs { min-width: 0; }
+  .shell .top-right { flex-shrink: 0; }
+  @media (max-width:620px) {
+    .shell .breadcrumbs { font-size: 0; }
+    .shell .breadcrumbs > strong { font-size: 10px; }
+    .shell .menu-trigger span { font-size: 12px; }
+  }
+}
